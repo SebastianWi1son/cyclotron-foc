@@ -290,7 +290,7 @@ reset():  integral_=error_prev_=measure_prev_=0; d_filter_.reset(); ramp_out_.re
 
 ---
 
-## 4. angle_tracker — 多圈展开 + 速度估计（`foc::angle_tracker`）
+## 4. angle_tracking — 多圈展开 + 速度估计（`foc::angle_tracking`）
 
 ```
 struct Config { float vel_lpf_tf; }    // s；0 = 关闭 LPF
@@ -446,9 +446,9 @@ float soft_deadzone(float error, float range):
 |---|---|---|---|
 | 1 | 变换恒等式 | transforms | ① 等幅值恒等式：ab.a²+ab.b² = (2/3)·(ia²+ib²+ic²)（ic=-ia-ib）② 往返：inv_park(park(ab,θ),θ) = ab（±1e-4）③ 符号钉死：θ=π/2, ab={1,0} → dq={0,-1} ④ **成对往返：clarke∘inv_clarke = I（D11）** ⑤ 类型安全：Dq 不能传进 park（编译期，静态断言） |
 | 2 | SVPWM 不变式 | svpwm | ua+ub+uc = 3·center；dq={0,0} → 三相全 center；\|dq.q\|≤limit 时线电压 ≤ 2·limit（ud≡0 路径） |
-| 3 | 多圈回绕 | angle_tracker | {5.8,0.1}→+1 圈；{0.1,5.8}→-1 圈；小步长（0.5 rad）不误判 |
+| 3 | 多圈回绕 | angle_tracking | {5.8,0.1}→+1 圈；{0.1,5.8}→-1 圈；小步长（0.5 rad）不误判 |
 | 4 | 对齐状态机 | alignment | RAMP 时长=align_ramp_time 且电压单调升；两次稳定→LOCKED 且 zero_offset = raw·pp·dir；超时→FAULT(SETTLE_TIMEOUT) |
-| 5 | 速度估计 | angle_tracker | 恒速 ω：LPF 收敛 \|vel-ω\|<ε（t>5·Tf）；零速：vel≡0；reset 后无伪速度 |
+| 5 | 速度估计 | angle_tracking | 恒速 ω：LPF 收敛 \|vel-ω\|<ε（t>5·Tf）；零速：vel≡0；reset 后无伪速度 |
 | 6 | 级联回归 | foc_core | VOLTAGE 模式：\|uq\| ≤ voltage_limit；死区/前馈路径输出有界；仿真收敛到 target |
 
 ---
@@ -483,7 +483,7 @@ float soft_deadzone(float error, float range):
 
 1. 骨架：CMake 三 target + inc/src 布局（D10）
 2. transforms + svpwm（§1/§2）+ 锚点 1/2
-3. angle_tracker（§4）+ 锚点 3/5
+3. angle_tracking（§4）+ 锚点 3/5
 4. alignment 状态机（§5）+ 锚点 4
 5. foc_core（§6 VOLTAGE + OPEN_LOOP）+ soft_deadzone（§7）+ 锚点 6
 6. example 闭环仿真（PC 验证全链路）

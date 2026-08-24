@@ -13,7 +13,7 @@
 
 | # | 决策点 | 结论 |
 |---|---|---|
-| **D1** | namespace | `foc::` 子命名空间分层（transforms/svpwm/angle_tracker/alignment/core/hal） |
+| **D1** | namespace | `foc::` 子命名空间分层（transforms/svpwm/angle_tracking/alignment/core/hal） |
 | **D2** | v1 范围 | **VOLTAGE + OPEN_LOOP**，CURRENT 留 v2 |
 | **D3** | 对齐方式 | **非阻塞状态机**（IDLE→RAMP→SETTLE→LOCKED→FAULT），无 delay_ms_cb |
 | **D4** | AngleTracker 归属 | **核心内组件**；HAL get_angle 语义 = 物理角 [0,2π) |
@@ -30,6 +30,8 @@
 | D6 | PID 来源 | **复用 lunokhod wheel 算法**（`control/wheel/` 的 PID/LPF/Ramp/SmoothPlanner 直接引用源码，不复制；lunokhod 非 git 仓库，submodule 待其转 git + 算法库定案后再议） |
 | D8 | 测试锚点 | 六项确认（见 §9） |
 | D15 | angle 存储形态 | **现算（快照 + 纯函数）**：状态 = full_rotations_ + raw_prev_，angle_abs() 现算派生，不缓存；缓存留待计算变贵/有状态时 |
+| D16 | alignment IO 边界 | **纯算法化**：tick 去 set_pwm 参数，输出 TickResult{state,u,v,w} 数据；hal 仅被 foc_core 依赖（单一 IO 出口，对齐/闭环统一发波路径） |
+| D17 | 对齐判稳 | **速度判据**：\|Δ\|/dt < settle_max_speed（默认 2.0 rad/s）+ 连续 settle_samples 次 + settle_timeout 超时 → FAULT | legacy 0.1rad@50ms 非阻塞化后间隔 1ms 语义漂移（宽松 50 倍）；别家对比后保留判稳（FAULT 容错需要传感器）；速度域 = v1 唯一可选（MCSDK 电流域 v2） |
 
 ### C. 外部依赖状态
 
@@ -45,8 +47,8 @@ foc/
 ├── inc/foc/                  # 统一头目录（foc 库名）
 │   ├── transforms.hpp        # Clarke/Park/InvPark — 零状态纯函数
 │   ├── svpwm.hpp             # 中心对齐 + 限幅
-│   ├── angle_tracker.hpp     # 多圈展开 + 速度 LPF
-│   ├── alignment.hpp         # 对齐状态机（非阻塞）
+│   ├── angle_tracking.hpp     # 多圈展开 + 速度 LPF
+│   ├── alignment.hpp         # 对齐状态机（非阻塞；纯算法，输出 uvw 数据 D16）
 │   ├── foc_core.hpp          # 编排：模式分发 + 级联（依赖 hal.hpp）
 │   ├── hal.hpp               # 回调形态（D5）
 │   └── config.hpp            # FocConfig 聚合（wheel 经验）
@@ -55,7 +57,9 @@ foc/
 └── examples/                 # example_foc.cpp（PC 电机模型闭环）
 ```
 
-依赖方向（单向，零环）：`config → hal → transforms/svpwm/angle_tracker/alignment → foc_core`
+依赖方向（单向，零环）：`config → hal → transforms/svpwm/angle_tracking/alignment → foc_core`
+
+**分层（D16）**：transforms/svpwm/angle_tracking/alignment 全部纯算法（零 IO 依赖；alignment 内部依赖 svpwm 发波计算）；**hal 仅被 foc_core 依赖**（单一 IO 出口——对齐/闭环的 uvw 统一由 foc_core 调 hw.set_pwm 送出）。
 
 ---
 
@@ -257,10 +261,10 @@ cfg{voltage_limit=1, voltage_supply=12}：
 
 ---
 
-## 5. angle_tracker.hpp — 多圈展开 + 速度估计（D4：核心内）
+## 5. angle_tracking.hpp — 多圈展开 + 速度估计（D4：核心内）
 
 ```cpp
-namespace foc::angle_tracker {
+namespace foc::angle_tracking {
 
 // 输入：raw 物理角 [0,2π)（HAL get_angle 语义）；输出：abs 展开角 + 滤波速度
 struct Config {
@@ -298,14 +302,14 @@ raw_vel = (abs - abs_prev) / dt
 vel = (cfg.vel_lpf_tf > 0) ? lpf(raw_vel, dt) : raw_vel   // LPF 接口见 §7
 ```
 
-**src/angle_tracker.cpp**（参考实现，用户敲后同步校准）：
+**src/angle_tracking.cpp**（参考实现，用户敲后同步校准）：
 
 ```cpp
-#include "angle_tracker.hpp"
+#include "angle_tracking.hpp"
 #include "algo/lpf.hpp"
 #include <cmath>
 
-namespace foc::angle_tracker {
+namespace foc::angle_tracking {
 namespace { constexpr float k2PI = 6.28318530717958647692f; }  // 内部链接（见 Vault 笔记）
 
 Tracker::Tracker(const Config& cfg) : cfg_(cfg), vel_lpf_(cfg.vel_lpf_tf) {
@@ -338,7 +342,7 @@ void Tracker::update(float raw_angle, float dt) {
 float Tracker::angle() const     { return full_rotations_ * k2PI + raw_prev_; }
 float Tracker::velocity() const  { return vel_; }
 int   Tracker::full_rotations() const { return full_rotations_; }
-}  // namespace foc::angle_tracker
+}  // namespace foc::angle_tracking
 ```
 
 锚点：±2π 跳变计数正确（D8-3）；恒速收敛、零速无漂移（D8-5）。
@@ -356,30 +360,47 @@ struct Config {
   float align_voltage;   // V（自由轴 3.0 / 受限轴 1.0 经验值沿用）
   float voltage_supply;  // V（补 cpp 时发现的缺口：RAMP 发波需 center，svpwm::Config 同款聚合）
   float align_ramp_time; // s（默认 2.0，对应 legacy 2s）
-  float settle_threshold; // rad（默认 0.1，legacy 沿用）
+  float settle_max_speed; // rad/s（默认 2.0；判稳=速度判据 |Δ|/dt<上限，等效 legacy 50ms/0.1rad；与采样间隔解耦）
   int   settle_samples;  // 判稳所需连续采样数（默认 2）
   float settle_timeout;  // s（默认 0.5，覆盖 legacy retry≤3 语义）
 };
 
 enum class State : uint8_t { IDLE, RAMP, SETTLE, LOCKED, FAULT };
+// 注意：Fault 为新设计（D3 补 legacy 容错缺失——legacy 对齐 retry 耗尽后仍继续，判稳失败也假成功）
 enum class Fault : uint8_t { NONE, NO_SENSOR, RAMP_TIMEOUT, UNSTABLE, SETTLE_TIMEOUT };
+// tick 输出帧：与 State/Fault 同族（状态机公共类型，namespace 级，D16）；RAMP: 斜坡波；其余态: 0
+struct TickResult { State state; float u, v, w; };
 
 class Aligner {
 public:
-  void   init(const Config& cfg, int pole_pairs, int direction);
+  explicit Aligner(const Config& cfg, int pole_pairs, int direction);  // §5 init→构造 决策；pp/dir 为电机参数，不走 Config（D14 宿主平铺）
   void   start();                        // IDLE → RAMP（等效 legacy foc_start_and_sync 入口）
   void   abort();                        // 任意态 → IDLE（G431 应响应急停）
-  State  tick(float raw_angle, float dt, hal::SetPwmFn set_pwm, void* ctx);
-  //   IDLE: 无动作
-  //   RAMP: 电角度固定 1.5π；v = align_voltage·(t/ramp_time) 每 tick 递增
+  // 纯算法（D16）：不碰 IO，输出本 tick 应发的波（数据），由 foc_core 统一发波
+  TickResult tick(float raw_angle, float dt);
+  //   IDLE: 无动作，输出 0
+  //   RAMP: 电角度固定 1.5π；v = align_voltage·(t/ramp_time) 每 tick 递增（svpwm::write 计算 uvw）
   //         到 t≥ramp_time → SETTLE（t 由 dt 累积）
-  //   SETTLE: 采样 raw_angle，连续 settle_samples 次 |Δ|<settle_threshold → LOCKED；
+  //   SETTLE: 采样 raw_angle，连续 settle_samples 次 |Δ|/dt<settle_max_speed → LOCKED；
   //           超时 → FAULT(SETTLE_TIMEOUT)；角度发散(Δ>2π·0.8?) → FAULT(UNSTABLE)
-  //   LOCKED: 计算 zero_offset_elec = raw·pole_pairs·direction，保持输出 0
-  //   FAULT:  原因码可查，输出由调用方断电
+  //   LOCKED: 计算 zero_offset_elec = raw·pole_pairs·direction，输出 0（撤电压由 foc_core 统一出口）
+  //   FAULT:  原因码可查，输出 0（断电由调用方决定）
   bool   locked() const;   // LOCKED 后供 FocCore 取 zero_offset_elec / 同步角度
   float  zero_offset_elec() const;
   Fault  fault() const;
+private:
+  // 状态逻辑（Q3 约定：tick 纯路由表，逻辑拆 do_xxx，转移集中在 do_xxx 内）
+  TickResult do_ramp(float raw, float dt);          // RAMP 态：斜坡发波计算 + RAMP→SETTLE（raw 用于记录判稳基准）
+  void       do_settle(float raw, float dt);        // SETTLE 态：判稳 + →LOCKED/FAULT 转移
+  Config cfg_;                // 启动时填一次的表（D14）
+  int    pp_;                 // 极对数（电角度 = raw·pp·dir）
+  int    dir_;                // 方向 1/-1
+  State  state_;
+  Fault  fault_ = Fault::NONE;        // 原因码（D3 新设计，legacy 无 fault）
+  float  t_;                  // RAMP/SETTLE 计时（dt 累积）
+  int    settle_count_;       // 连续判稳计数
+  float  settle_raw_prev_;    // 上次采样（Δ 判据）
+  float  zero_offset_elec_;   // LOCKED 时冻结：raw·pp·dir
 };
 }
 ```
@@ -394,50 +415,86 @@ public:
 namespace foc::alignment {
 namespace { constexpr float k2PI = 6.28318530717958647692f; }  // 内部链接
 
-// 状态机：IDLE → RAMP → SETTLE → LOCKED / FAULT（D3 非阻塞；无 delay）
-State Aligner::tick(float raw, float dt, hal::SetPwmFn set_pwm, void* ctx) {
-    switch (state_) {
-    case IDLE:
-        break;
-    case RAMP: {   // 电角度固定 1.5π；电压斜坡 align_voltage·(t/ramp_time)（legacy 2s 斜坡）
-        t_ += dt;
-        float k = std::fmin(t_ / cfg_.align_ramp_time_, 1.0f);
-        // 注：θ_elec 是否乘 direction —— legacy 未乘（P2 挂起项同源），建议与 foc_core 一致乘 direction，待拍板
-        auto r = svpwm::write({cfg_.align_voltage_, cfg_.voltage_supply_}, {0.0f, cfg_.align_voltage_ * k},
-                              1.5f * k2PI);
-        set_pwm(ctx, r.u_, r.v_, r.w_);
-        if (t_ >= cfg_.align_ramp_time_) { state_ = SETTLE; t_ = 0.0f; settle_count_ = 0; }
-        break;
-    }
-    case SETTLE: {   // 连续 settle_samples 次 |Δraw| < settle_threshold → LOCKED（legacy 两次 50ms 采样）
-        t_ += dt;
-        float d = raw - settle_raw_prev_;
-        settle_raw_prev_ = raw;
-        if (std::fabs(d) < cfg_.settle_threshold_) {
-            if (++settle_count_ >= cfg_.settle_samples_) {
-                zero_offset_elec_ = raw * pp_ * dir_;
-                set_pwm(ctx, 0.0f, 0.0f, 0.0f);   // 对齐完成，撤电压
-                state_ = LOCKED;
-            }
-        } else {
-            settle_count_ = 0;
-        }
-        if (t_ > cfg_.settle_timeout_) state_ = FAULT + SETTLE_TIMEOUT;   // 超时（覆盖 legacy retry≤3）
-        break;
-    }
-    case LOCKED:   // 保持零输出；zero_offset 由 FocCore 取走（一次）
-        break;
-    case FAULT:    // 原因码 fault() 可查；输出由调用方断电
-        break;
-    }
-    return state_;
+Aligner::Aligner(const Config& cfg, int pole_pairs, int direction)
+    : cfg_(cfg), pp_(pole_pairs), dir_(direction),
+      state_(State::IDLE), fault_(Fault::NONE),
+      t_(0.0f), settle_count_(0), settle_raw_prev_(0.0f), zero_offset_elec_(0.0f) {}
+
+void Aligner::start() {            // 对齐入口（等效 legacy foc_start_and_sync）：任意态 → RAMP
+    t_ = 0.0f;
+    settle_count_ = 0;
+    settle_raw_prev_ = 0.0f;
+    fault_ = Fault::NONE;
+    state_ = State::RAMP;
 }
+
+void Aligner::abort() {            // 任意态 → IDLE（G431 应响应急停）
+    t_ = 0.0f;
+    settle_count_ = 0;
+    fault_ = Fault::NONE;
+    state_ = State::IDLE;
+}
+
+// 状态机：IDLE → RAMP → SETTLE → LOCKED / FAULT（D3 非阻塞；无 delay）
+// 纯算法（D16）：输出 uvw 数据，不发波（发波 = foc_core 统一出口）
+// 结构（Q3 约定）：tick = 纯路由表；状态逻辑拆 do_xxx（转移集中在 do_xxx 内，参数按需传）
+TickResult Aligner::tick(float raw, float dt) {
+    TickResult r{state_, 0.0f, 0.0f, 0.0f};   // 默认 0 输出（IDLE/SETTLE/LOCKED/FAULT 撤电压语义）
+    switch (state_) {
+    case State::IDLE:   break;                       // 无动作
+    case State::RAMP:   r = do_ramp(raw, dt); break; // 斜坡发波计算 + RAMP→SETTLE 转移
+    case State::SETTLE: do_settle(raw, dt);  break;  // 判稳 + →LOCKED/FAULT 转移（输出保持 0）
+    case State::LOCKED: break;                       // 零输出；zero_offset 由 FocCore 取走（一次）
+    case State::FAULT:  break;                       // 原因码 fault() 可查；输出 0，断电由调用方决定
+    }
+    return r;
+}
+
+// RAMP：电角度固定 1.5π；电压斜坡 align_voltage·(t/ramp_time)（legacy 2s 斜坡）
+TickResult Aligner::do_ramp(float raw, float dt) {
+    t_ += dt;
+    float k = std::fmin(t_ / cfg_.align_ramp_time_, 1.0f);
+    // 注：θ_elec 是否乘 direction —— legacy 未乘（P2 挂起项同源），建议与 foc_core 一致乘 direction，待拍板
+    auto sv = svpwm::write({cfg_.align_voltage_, cfg_.voltage_supply_}, {0.0f, cfg_.align_voltage_ * k},
+                           1.5f * k2PI);
+    TickResult r{state_, sv.u_, sv.v_, sv.w_};   // 数据输出；foc_core 统一发波
+    if (t_ >= cfg_.align_ramp_time_) {
+        state_ = State::SETTLE;
+        t_ = 0.0f;
+        settle_count_ = 0;
+        settle_raw_prev_ = raw;      // 判稳差分的首个基准（否则 SETTLE 首 tick 的 Δ 用垃圾基准误判）
+    }
+    return r;
+}
+
+// SETTLE：连续 settle_samples 次 |Δraw|/dt < settle_max_speed → LOCKED（速度判据，等效 legacy 50ms/0.1rad）
+void Aligner::do_settle(float raw, float dt) {
+    t_ += dt;
+    float d = raw - settle_raw_prev_;
+    settle_raw_prev_ = raw;
+    if (std::fabs(d) < cfg_.settle_max_speed_ * dt) {   // 速度判据：|Δ|/dt < 上限 ⟺ |Δ| < 上限·dt（与采样间隔解耦）
+        if (++settle_count_ >= cfg_.settle_samples_) {
+            zero_offset_elec_ = raw * pp_ * dir_;
+            state_ = State::LOCKED;       // 输出保持 0（r 默认值）→ foc_core 出口自然撤电压
+        }
+    } else {
+        settle_count_ = 0;
+    }
+    if (t_ > cfg_.settle_timeout_) {      // 超时（D3 新设计，覆盖 legacy retry≤3 假成功）
+        state_ = State::FAULT;            // 进入 FAULT 态
+        fault_ = Fault::SETTLE_TIMEOUT;   // 记录原因码（两动作分开写，非相加）
+    }
+}
+
+bool  Aligner::locked() const { return state_ == State::LOCKED; }
+float Aligner::zero_offset_elec() const { return zero_offset_elec_; }
+Fault Aligner::fault() const { return fault_; }
 }
 ```
 
-> 说明：tick 直接调 set_pwm（ctx 穿透）不经 FocCore 闭环（§6 规格）；FAULT 分支代码（RAMP_TIMEOUT / NO_SENSOR）与 UNSTABLE 判据（Δ>0.8·2π）见 hpp 注释，实现时补全。
+> 说明：tick 纯算法（D16），输出 uvw 数据，由 foc_core 统一调 hw.set_pwm 发波（对齐/闭环同一 IO 出口）；FAULT 分支代码（RAMP_TIMEOUT / NO_SENSOR）与 UNSTABLE 判据（Δ>0.8·2π）见 hpp 注释，实现时补全。
 
-锚点：RAMP→SETTLE→LOCKED 迁移 + 失败路径（不稳→超时→FAULT）（D8-4）。对齐期间每 tick 的 set_pwm 由状态机直接调（ctx 穿透），不经过 FocCore 闭环。
+锚点：RAMP→SETTLE→LOCKED 迁移 + 失败路径（不稳→超时→FAULT）（D8-4）。对齐期间每 tick 的发波由状态机**计算输出 uvw 数据**（D16 纯算法），由 FocCore 统一调 hw.set_pwm 送出——对齐/闭环共用单一 IO 出口。
 
 ---
 
@@ -458,7 +515,7 @@ struct Config {                       // wheel Config 聚合经验
   float deadzone;        // rad；0 = 关闭（soft deadzone，legacy 沿用）
   float vel_lpf_tf;      // s；0 = 关闭 LPF
   // 对齐（§6 Config 内嵌或平铺）
-  float align_voltage; float align_ramp_time; float settle_threshold;
+  float align_voltage; float align_ramp_time; float settle_max_speed;
   int settle_samples; float settle_timeout;
   // 轨迹
   float traj_vmax;       // rad/s；0 = 不限速
@@ -484,7 +541,8 @@ public:
 
 // tick 伪代码（VOLTAGE 模式，1kHz 假设）：
 //   if !alignment.locked():
-//       alignment.tick(hw.get_angle(ctx), dt, hw.set_pwm, hw.ctx)
+//       auto ar = alignment.tick(hw.get_angle(ctx), dt)   // 纯算法（D16），输出本 tick 应发的波
+//       hw.set_pwm(ctx, ar.u, ar.v, ar.w)                 // 统一 IO 出口（对齐/闭环同一路径）
 //       return
 //   raw = hw.get_angle(ctx)
 //   tracker.update(raw, dt)                      // §5：abs_angle + velocity
@@ -506,7 +564,7 @@ public:
 ```cpp
 // 成员组织（参考；构造风格与算法库一致，见 §5 init→构造 决策）：
 //   hal::Hardware hw_;  Config cfg_;
-//   angle_tracker::Tracker tracker_;
+//   angle_tracking::Tracker tracker_;
 //   alignment::Aligner aligner_;
 //   algo::PID angle_pid_, vel_pid_;
 //   algo::SmoothPlanner planner_;
@@ -564,9 +622,9 @@ float soft_deadzone(float error, float range);   // 本库自有（legacy dsp_so
 |---|---|---|---|
 | 1 | 变换恒等式 | transforms | 构造已知向量，Clarke→Park→InvPark 往返一致 |
 | 2 | SVPWM 不变式 | svpwm | 线电压 ≤ 2·limit；dq=Vdc/√3 全角度不饱和（D13 零序注入） |
-| 3 | 多圈回绕 | angle_tracker | ±2π 跳变按 0.8·2π 判据计数正确 |
+| 3 | 多圈回绕 | angle_tracking | ±2π 跳变按 0.8·2π 判据计数正确 |
 | 4 | 对齐状态机 | alignment | RAMP→SETTLE→LOCKED + 失败路径（不稳→FAULT） |
-| 5 | 速度估计 | angle_tracker | 恒速→LPF 收敛；零速→无漂移 |
+| 5 | 速度估计 | angle_tracking | 恒速→LPF 收敛；零速→无漂移 |
 | 6 | 级联回归 | foc_core | VOLTAGE 模式 planner→angle→vel 链路输出有界 |
 
 工程约束（D10）：test target 独立编译、-Werror；锚点测行为不测数值细节。
@@ -588,7 +646,7 @@ example_foc.cpp：
 
 1. 骨架：CMake 三 target + inc/src 布局 + -Werror（D10）
 2. transforms + svpwm + 锚点 1/2
-3. angle_tracker + 锚点 3/5
+3. angle_tracking + 锚点 3/5
 4. alignment 状态机 + 锚点 4
 5. foc_core（VOLTAGE + OPEN_LOOP）+ 锚点 6（级联回归）
 6. example 闭环仿真（PC 验证全链路）
@@ -606,5 +664,8 @@ example_foc.cpp：
 - [x] D7/D9/D10：按推荐默认通过 ✅
 - [x] D8：六项锚点确认 ✅
 - [x] D13：SVPWM 语义修正——modulate 加零序注入 v0=-(max+min)/2（carrier-based SVPWM，与经典 7 段式等价）✅ 动机：legacy 与 v1 初版均为 SPWM（无注入，线电压上限 0.866·Vdc），语义偏离修复；代价：锚点 2 不变式改为线电压 ≤ 2·limit（和=3·center 失效）
-- [x] D14：Config 职责边界——公开组件自备 Config；原语构造传参；宿主平铺转发零件参数 ✅ 动机：angle_tracker::Config.vel_lpf_Tf_ 职责归属质疑（见 Vault 2026-08-23-Config职责边界）；结论：信息隐藏 + 层级分工，嵌套 LPFConfig 被否（1 参数样板 + 两层嵌套代价）
+- [x] D14：Config 职责边界——公开组件自备 Config；原语构造传参；宿主平铺转发零件参数 ✅ 动机：angle_tracking::Config.vel_lpf_Tf_ 职责归属质疑（见 Vault 2026-08-23-Config职责边界）；结论：信息隐藏 + 层级分工，嵌套 LPFConfig 被否（1 参数样板 + 两层嵌套代价）
 - [x] D15：angle 现算 vs 缓存——**现算**（状态单一事实来源）✅ 一致性由"读传感器一次（update 参数快照）+ 纯函数派生"保证，与缓存无关；现算省 1-2 周期无可省收益，缓存引入双份状态同步出错面；别家缓存（SimpleFOC 总线读取/ODrive 融合）因计算贵或有状态，我们的展开便宜且无记忆；时机：abs 变贵/变状态时转缓存
+- [x] D16：alignment 纯算法化（修正 D3 的 ctx 穿透）✅ 动机：分层一致性——算法层零 IO 依赖、编排层（foc_core）单点 IO（教科书分层）；查证结论：跨平台差异已被 hal 层隔离（自家接口非厂商库），纯算法买的是统一出口/分层纯净而非可移植；回调形态保留但动机 = **PC 可测注入**（非跨平台运行时多态——跨平台正道是编译期分发：opaque 类型 + 平台实现文件 + 构建系统选择）；窗口期（alignment 未实现）改接口成本≈0；hal 命名沿用通用术语 HAL（Hardware Abstraction Layer，业界通用非 STM32 专名），不因撞名改名
+- [x] 实现约定（Q3）：状态机 tick = 纯路由表 + do_xxx 拆分（do_ramp/do_settle；转移集中在 do_xxx 内；参数按需传；无动作态 IDLE/LOCKED/FAULT 直接 break 不设空函数）；TickResult 与 State/Fault 同族放 namespace 级（类内只留方法 + private 状态）
+- [x] D17：对齐判稳 = 速度判据（三参数三角色）✅ 判稳标准 settle_max_speed（2.0 rad/s，零位误差上界 = max_speed·dt）+ 确认次数 settle_samples（抗噪去抖）+ 等待上限 settle_timeout（容错 → FAULT）。动机：legacy 0.1rad@50ms 非阻塞化后间隔 1ms、阈值未缩放 → 判据宽松 50 倍（100 rad/s 也算稳）语义漂移。别家对比：SimpleFOC 不判稳（信任斜坡停稳，无 fault 概念）；QDrive 固定延时 + SAMPLE_COUNT 次平均 + 多极对一致性校验（EncoderError，堵转/测量不稳）；MCSDK 电流域 Validation Tick（连续 N 个速度环 Id 在带宽内——v1 无电流采样不可行）。结论：保留判稳（它是 FAULT 态的传感器，无判稳则容错是空壳），位置域速度判据是 v1 唯一可选域，结构与 MCSDK 连续计数同构；SimpleFOC/QDrive 的"不判稳"成立前提是放弃失败检测 + 用平均吸残余误差，与 D3 容错目标冲突

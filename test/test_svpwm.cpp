@@ -33,35 +33,35 @@ void test_common_invariants() {
     const float center = cfg.voltage_supply_ * 0.5f;
 
     // 零输出 → 三相全 center
-    foc::transforms::ThreePhase z = foc::svpwm::write(cfg, {0.0f, 0.0f}, 1.0f);
+    foc::transforms::ThreePhase z = foc::svpwm::calc(cfg, {0.0f, 0.0f}, 1.0f);
     check("zero u", z.u_, center);
     check("zero v", z.v_, center);
     check("zero w", z.w_, center);
 
     // 限幅等价：dq.q 超 limit 与恰好 limit 输出一致
-    foc::transforms::ThreePhase over = foc::svpwm::write(cfg, {0.0f, 5.0f}, 0.0f);
-    foc::transforms::ThreePhase at   = foc::svpwm::write(cfg, {0.0f, 1.0f}, 0.0f);
+    foc::transforms::ThreePhase over = foc::svpwm::calc(cfg, {0.0f, 5.0f}, 0.0f);
+    foc::transforms::ThreePhase at   = foc::svpwm::calc(cfg, {0.0f, 1.0f}, 0.0f);
     check("clamp u", over.u_, at.u_);
     check("clamp v", over.v_, at.v_);
     check("clamp w", over.w_, at.w_);
 
     // limit=0 安全默认 → 全 center（0 = 不输出）
     foc::svpwm::Config zl{0.0f, 12.0f};
-    foc::transforms::ThreePhase z2 = foc::svpwm::write(zl, {0.0f, 1.0f}, 0.5f);
+    foc::transforms::ThreePhase z2 = foc::svpwm::calc(zl, {0.0f, 1.0f}, 0.5f);
     check("limit0 u", z2.u_, center);
     check("limit0 v", z2.v_, center);
     check("limit0 w", z2.w_, center);
 
     // 角度 wrap：θ 与 θ+2π·k 输出一致（多圈等价）
-    foc::transforms::ThreePhase w0 = foc::svpwm::write(cfg, {0.0f, 1.0f}, 0.0f);
-    foc::transforms::ThreePhase w1 = foc::svpwm::write(cfg, {0.0f, 1.0f}, TWO_PI * 3.0f);
+    foc::transforms::ThreePhase w0 = foc::svpwm::calc(cfg, {0.0f, 1.0f}, 0.0f);
+    foc::transforms::ThreePhase w1 = foc::svpwm::calc(cfg, {0.0f, 1.0f}, TWO_PI * 3.0f);
     check("wrap u", w1.u_, w0.u_, 1e-4f);
     check("wrap v", w1.v_, w0.v_, 1e-4f);
     check("wrap w", w1.w_, w0.w_, 1e-4f);
 
     // 线电压 ≤ 2·limit（VOLTAGE 路径 d≡0，全角度；零序不影响线电压，两种实现都成立）
     for (float th = 0.0f; th < TWO_PI; th += 0.1f) {
-        foc::transforms::ThreePhase v = foc::svpwm::write(cfg, {0.0f, 1.0f}, th);
+        foc::transforms::ThreePhase v = foc::svpwm::calc(cfg, {0.0f, 1.0f}, th);
         float l1 = std::fabs(v.u_ - v.v_);
         float l2 = std::fabs(v.v_ - v.w_);
         float l3 = std::fabs(v.w_ - v.u_);
@@ -95,7 +95,7 @@ void test_svpwm_target() {
     //    SPWM（无注入）：峰值 = A = 6.93 > 6 → 输出越界（削波）→ 红
     bool unsaturated = true;
     for (float th = 0.0f; th < TWO_PI; th += 0.05f) {
-        foc::transforms::ThreePhase r = foc::svpwm::write(cfg, {0.0f, limit}, th);
+        foc::transforms::ThreePhase r = foc::svpwm::calc(cfg, {0.0f, limit}, th);
         if (r.u_ < -1e-2f || r.u_ > supply + 1e-2f ||
             r.v_ < -1e-2f || r.v_ > supply + 1e-2f ||
             r.w_ < -1e-2f || r.w_ > supply + 1e-2f) {
@@ -109,7 +109,7 @@ void test_svpwm_target() {
 
     // ② 零序注入对称化：max(u-center) + min(u-center) ≈ 0
     //    min-max 注入把调制波压成关于 0 对称；SPWM 下 max/min 不对称 → 红
-    foc::transforms::ThreePhase r = foc::svpwm::write(cfg, {0.0f, limit}, 1.0f);
+    foc::transforms::ThreePhase r = foc::svpwm::calc(cfg, {0.0f, limit}, 1.0f);
     float mx = std::fmax(r.u_, std::fmax(r.v_, r.w_)) - center;
     float mn = std::fmin(r.u_, std::fmin(r.v_, r.w_)) - center;
     check("[target] zero-seq symmetry", mx + mn, 0.0f, 1e-2f);
