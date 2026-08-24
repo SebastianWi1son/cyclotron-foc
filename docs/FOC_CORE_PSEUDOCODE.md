@@ -17,6 +17,7 @@
 | **D2** | v1 范围 | **VOLTAGE + OPEN_LOOP**，CURRENT 留 v2 |
 | **D3** | 对齐方式 | **非阻塞状态机**（IDLE→RAMP→SETTLE→LOCKED→FAULT），无 delay_ms_cb |
 | **D4** | AngleTracker 归属 | **核心内组件**；HAL get_angle 语义 = 物理角 [0,2π) |
+| **D14** | Config 职责边界 | **公开组件自备 Config（API 面演进安全）；内部原语（LPF/Ramp/SmoothPlanner）构造传参不设 Config；宿主 Config 平铺转发零件参数（wheel 先例 PIDConfig.d_filter_Tf_），不嵌套零件 Config** |
 | **D5** | 回调形态 | **函数指针 + ctx 通道**（wheel 同构） |
 
 ### B. 默认确认项（已拍板）
@@ -28,6 +29,7 @@
 | D10 | 工程约束 | 零依赖（仅 \<cmath\>）、声明/定义分离、-Wall -Wextra -Werror、三 target |
 | D6 | PID 来源 | **复用 lunokhod wheel 算法**（`control/wheel/` 的 PID/LPF/Ramp/SmoothPlanner 直接引用源码，不复制；lunokhod 非 git 仓库，submodule 待其转 git + 算法库定案后再议） |
 | D8 | 测试锚点 | 六项确认（见 §9） |
+| D15 | angle 存储形态 | **现算（快照 + 纯函数）**：状态 = full_rotations_ + raw_prev_，angle_abs() 现算派生，不缓存；缓存留待计算变贵/有状态时 |
 
 ### C. 外部依赖状态
 
@@ -79,6 +81,9 @@ struct Hardware {
 // 无 delay_ms_cb —— D3 非阻塞对齐的直接红利
 }
 ```
+
+> **hal 无 cpp**：纯类型定义（回调签名 + Hardware 结构体），无逻辑；`src/hal.cpp` 为 0 字节空占位，可删（CMake 同步移除 `src/hal.cpp`）。
+> ⚠️ **签名差异挂起**（用户 hpp 草稿 vs 本文档）：SetPwmFn 第三参——文档 `float uc`（值）vs 用户 `float* uc`（指针）；GetCurrentFn——文档 `void(*)(ctx, float*, float*)`（输出指针）vs 用户 `float(*)(ctx, float*, float*)`（返回 float）。待确认后同步。
 
 ---
 
@@ -264,12 +269,20 @@ struct Config {
 
 class Tracker {
 public:
-  void   init(const Config& cfg);
+  explicit Tracker(const Config& cfg);   // 构造函数（与算法库 PID/LPF 一致；init 为 legacy C 风格残留，已改）
   void   reset(float raw_angle);        // 对齐成功后同步（含 full_rotations 清零）
   void   update(float raw_angle, float dt);  // dt 实测穿透
   float  angle() const;                 // 多圈展开角 rad（连续）
   float  velocity() const;              // rad/s（LPF 后）
   int    full_rotations() const;
+
+private:
+  Config cfg_;
+  float raw_prev_ = 0.0f;   // 上次 raw
+  float abs_prev_ = 0.0f;   // 上次展开角
+  int   full_rotations_ = 0;
+  float vel_ = 0.0f;
+  algo::LPF vel_lpf_;       // 复用 wheel LPF（D6）；cfg.vel_lpf_tf 构造传入（0 = 直通，构造时用 0 亦可）
 };
 }
 ```
@@ -285,6 +298,49 @@ raw_vel = (abs - abs_prev) / dt
 vel = (cfg.vel_lpf_tf > 0) ? lpf(raw_vel, dt) : raw_vel   // LPF 接口见 §7
 ```
 
+**src/angle_tracker.cpp**（参考实现，用户敲后同步校准）：
+
+```cpp
+#include "angle_tracker.hpp"
+#include "algo/lpf.hpp"
+#include <cmath>
+
+namespace foc::angle_tracker {
+namespace { constexpr float k2PI = 6.28318530717958647692f; }  // 内部链接（见 Vault 笔记）
+
+Tracker::Tracker(const Config& cfg) : cfg_(cfg), vel_lpf_(cfg.vel_lpf_tf) {
+    reset(0.0f);
+}
+
+void Tracker::reset(float raw_angle) {
+    raw_prev_ = raw_angle;
+    abs_prev_ = raw_angle;
+    full_rotations_ = 0;
+    vel_ = 0.0f;
+    vel_lpf_.reset();
+}
+
+void Tracker::update(float raw_angle, float dt) {
+    float d_raw = raw_angle - raw_prev_;
+    // 跳变判据 0.8·2π（legacy 沿用）：raw 回绕一圈
+    if (d_raw > 0.8f * k2PI)        full_rotations_ -= 1;   // 正跳变 = raw 少一圈（实际多走一圈）
+    else if (d_raw < -0.8f * k2PI)  full_rotations_ += 1;   // 负跳变 = raw 多一圈
+    raw_prev_ = raw_angle;
+
+    float abs = full_rotations_ * k2PI + raw_angle;
+    if (dt > 0.0f) {
+        float raw_vel = (abs - abs_prev_) / dt;
+        vel_ = (cfg_.vel_lpf_tf > 0.0f) ? vel_lpf_.calc(raw_vel, dt) : raw_vel;
+    }
+    abs_prev_ = abs;
+}
+
+float Tracker::angle() const     { return full_rotations_ * k2PI + raw_prev_; }
+float Tracker::velocity() const  { return vel_; }
+int   Tracker::full_rotations() const { return full_rotations_; }
+}  // namespace foc::angle_tracker
+```
+
 锚点：±2π 跳变计数正确（D8-3）；恒速收敛、零速无漂移（D8-5）。
 
 ---
@@ -298,6 +354,7 @@ namespace foc::alignment {
 // legacy 阻塞版：1000 步×2ms 斜坡 @1.5π 电角度 → 两次采样(50ms 间隔)Δ<0.1rad 判稳，retry≤3 → zero_offset_elec = settled·pp·dir
 struct Config {
   float align_voltage;   // V（自由轴 3.0 / 受限轴 1.0 经验值沿用）
+  float voltage_supply;  // V（补 cpp 时发现的缺口：RAMP 发波需 center，svpwm::Config 同款聚合）
   float align_ramp_time; // s（默认 2.0，对应 legacy 2s）
   float settle_threshold; // rad（默认 0.1，legacy 沿用）
   int   settle_samples;  // 判稳所需连续采样数（默认 2）
@@ -326,6 +383,59 @@ public:
 };
 }
 ```
+
+**src/alignment.cpp**（参考实现，用户敲后同步校准；对齐细节以 legacy foc.c 对齐段为准）：
+
+```cpp
+#include "alignment.hpp"
+#include "svpwm.hpp"
+#include <cmath>
+
+namespace foc::alignment {
+namespace { constexpr float k2PI = 6.28318530717958647692f; }  // 内部链接
+
+// 状态机：IDLE → RAMP → SETTLE → LOCKED / FAULT（D3 非阻塞；无 delay）
+State Aligner::tick(float raw, float dt, hal::SetPwmFn set_pwm, void* ctx) {
+    switch (state_) {
+    case IDLE:
+        break;
+    case RAMP: {   // 电角度固定 1.5π；电压斜坡 align_voltage·(t/ramp_time)（legacy 2s 斜坡）
+        t_ += dt;
+        float k = std::fmin(t_ / cfg_.align_ramp_time_, 1.0f);
+        // 注：θ_elec 是否乘 direction —— legacy 未乘（P2 挂起项同源），建议与 foc_core 一致乘 direction，待拍板
+        auto r = svpwm::write({cfg_.align_voltage_, cfg_.voltage_supply_}, {0.0f, cfg_.align_voltage_ * k},
+                              1.5f * k2PI);
+        set_pwm(ctx, r.u_, r.v_, r.w_);
+        if (t_ >= cfg_.align_ramp_time_) { state_ = SETTLE; t_ = 0.0f; settle_count_ = 0; }
+        break;
+    }
+    case SETTLE: {   // 连续 settle_samples 次 |Δraw| < settle_threshold → LOCKED（legacy 两次 50ms 采样）
+        t_ += dt;
+        float d = raw - settle_raw_prev_;
+        settle_raw_prev_ = raw;
+        if (std::fabs(d) < cfg_.settle_threshold_) {
+            if (++settle_count_ >= cfg_.settle_samples_) {
+                zero_offset_elec_ = raw * pp_ * dir_;
+                set_pwm(ctx, 0.0f, 0.0f, 0.0f);   // 对齐完成，撤电压
+                state_ = LOCKED;
+            }
+        } else {
+            settle_count_ = 0;
+        }
+        if (t_ > cfg_.settle_timeout_) state_ = FAULT + SETTLE_TIMEOUT;   // 超时（覆盖 legacy retry≤3）
+        break;
+    }
+    case LOCKED:   // 保持零输出；zero_offset 由 FocCore 取走（一次）
+        break;
+    case FAULT:    // 原因码 fault() 可查；输出由调用方断电
+        break;
+    }
+    return state_;
+}
+}
+```
+
+> 说明：tick 直接调 set_pwm（ctx 穿透）不经 FocCore 闭环（§6 规格）；FAULT 分支代码（RAMP_TIMEOUT / NO_SENSOR）与 UNSTABLE 判据（Δ>0.8·2π）见 hpp 注释，实现时补全。
 
 锚点：RAMP→SETTLE→LOCKED 迁移 + 失败路径（不稳→超时→FAULT）（D8-4）。对齐期间每 tick 的 set_pwm 由状态机直接调（ctx 穿透），不经过 FocCore 闭环。
 
@@ -391,6 +501,33 @@ public:
 }
 ```
 
+**src/foc_core.cpp**（参考实现，用户敲后同步校准）：
+
+```cpp
+// 成员组织（参考；构造风格与算法库一致，见 §5 init→构造 决策）：
+//   hal::Hardware hw_;  Config cfg_;
+//   angle_tracker::Tracker tracker_;
+//   alignment::Aligner aligner_;
+//   algo::PID angle_pid_, vel_pid_;
+//   algo::SmoothPlanner planner_;
+//   float planned_prev_ = 0, angle_elec_ = 0, zero_offset_elec_ = 0;
+// P1/P3 已决（2026-08-23）：Ramp/LPF/SmoothPlanner 统一加 set_state(x)（bumpless transfer），
+// 对齐完成时 planner_.set_state(settled)（等价 legacy 三行注入），由本仓库实现，待用户同步回上游
+
+// align_and_sync（等效 legacy foc_start_and_sync 非阻塞化）：
+//   aligner_.start();               // IDLE → RAMP（后续 tick 驱动）
+//   *cmd_target_out = 0;            // 对齐期间目标置零，闭环不介入
+// aligned() 条件满足后（tick 内检测）：
+//   zero_offset_elec_ = aligner_.zero_offset_elec();
+//   tracker_.reset(hw_.get_angle(ctx));   // 对齐成功 → 同步多圈原点
+
+// tick_velocity（OPEN_LOOP，v1；等效 legacy foc_open_loop_velocity_tick）：
+//   // legacy：dq = {0, limit_voltage}，电角度开环积分（不依赖传感器）
+//   angle_elec_ += target_vel * pole_pairs * direction * dt;   // 注：legacy 漏乘 direction（P2 挂起），建议修正
+//   r = svpwm::write({voltage_limit, voltage_supply}, {0, limit_voltage}, angle_elec_);
+//   hw_.set_pwm(ctx, r.u_, r.v_, r.w_);
+```
+
 ### PID / 轨迹规划器接口（D6：**复用 lunokhod wheel 算法**，不复制；接口以 wheel 源码为权威）
 
 ```cpp
@@ -409,7 +546,7 @@ class PID {
 float soft_deadzone(float error, float range);   // 本库自有（legacy dsp_soft_deadzone 数学，公式见 FOC_MATH_SPEC §7）
 ```
 
-> 注意：wheel `SmoothPlanner`/`Ramp` 在 max_rate=0 时行为是**冻结输出**（非直通），且无对齐后注入初始值的接口（legacy 直接改 planner 内部状态）——这两个接口缺口见 FOC_MATH_SPEC §10 决策点 P1/P3。
+> 注意：wheel `SmoothPlanner`/`Ramp` 在 max_rate=0 时行为是**冻结输出**（非直通）——该语义保留；对齐后注入初始值接口缺口（P1/P3）**已决**：Ramp/LPF/SmoothPlanner 统一加 `set_state(x)`（行为不变，本仓库已实现，同步回上游后删除此注）。
 
 ---
 
@@ -469,3 +606,5 @@ example_foc.cpp：
 - [x] D7/D9/D10：按推荐默认通过 ✅
 - [x] D8：六项锚点确认 ✅
 - [x] D13：SVPWM 语义修正——modulate 加零序注入 v0=-(max+min)/2（carrier-based SVPWM，与经典 7 段式等价）✅ 动机：legacy 与 v1 初版均为 SPWM（无注入，线电压上限 0.866·Vdc），语义偏离修复；代价：锚点 2 不变式改为线电压 ≤ 2·limit（和=3·center 失效）
+- [x] D14：Config 职责边界——公开组件自备 Config；原语构造传参；宿主平铺转发零件参数 ✅ 动机：angle_tracker::Config.vel_lpf_Tf_ 职责归属质疑（见 Vault 2026-08-23-Config职责边界）；结论：信息隐藏 + 层级分工，嵌套 LPFConfig 被否（1 参数样板 + 两层嵌套代价）
+- [x] D15：angle 现算 vs 缓存——**现算**（状态单一事实来源）✅ 一致性由"读传感器一次（update 参数快照）+ 纯函数派生"保证，与缓存无关；现算省 1-2 周期无可省收益，缓存引入双份状态同步出错面；别家缓存（SimpleFOC 总线读取/ODrive 融合）因计算贵或有状态，我们的展开便宜且无记忆；时机：abs 变贵/变状态时转缓存

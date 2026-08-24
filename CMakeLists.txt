@@ -19,7 +19,6 @@ add_library(foc STATIC
     src/angle_tracker.cpp
     src/alignment.cpp
     src/foc_core.cpp
-    src/hal.cpp
     src/svpwm.cpp
 )
 
@@ -40,6 +39,13 @@ target_link_libraries(test_svpwm PRIVATE foc)
 target_compile_options(test_svpwm PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined)
 target_link_options(test_svpwm PRIVATE -fsanitize=address,undefined)
 add_test(NAME test_svpwm COMMAND test_svpwm)
+
+# ── angle_tracker 测试（锚点 3/5，含 enc_fake 极性验证）──
+add_executable(test_tracker test/test_tracker.cpp)
+target_link_libraries(test_tracker PRIVATE foc)
+target_compile_options(test_tracker PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined)
+target_link_options(test_tracker PRIVATE -fsanitize=address,undefined)
+add_test(NAME test_tracker COMMAND test_tracker)
 
 # ── PC 闭环仿真演示 ──
 add_executable(example_foc examples/example_foc.cpp)
