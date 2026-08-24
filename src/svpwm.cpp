@@ -12,12 +12,12 @@ namespace foc::svpwm {
             return val;
         }
 
-        // ----- -----
+        // ----- svpwm compose -----
         transforms::ThreePhase compose(transforms::DQ dq, float angle_elec, float voltage_limit) {
             // --- clamp ---
             dq.d_ = constrainf(dq.d_, voltage_limit);
             dq.q_ = constrainf(dq.q_, voltage_limit);
-            // --- nomalization ---
+            // --- angle normalization ---
             float theta = std::fmod(angle_elec, k2PI);
             if (theta < 0.0f) { theta += k2PI; }
             // --- inv clarke/park ---

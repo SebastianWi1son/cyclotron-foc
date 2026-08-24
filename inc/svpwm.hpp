@@ -3,6 +3,7 @@
 #include "transforms.hpp"
 
 namespace foc::svpwm {
+
     struct Config {
         float voltage_limit_;           // clamp for security
         float voltage_supply_;          // center voltage
