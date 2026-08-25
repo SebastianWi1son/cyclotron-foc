@@ -23,7 +23,7 @@ public:
     explicit Aligner (const Config &cfg, int pole_pairs, int direction);      // Construct/Init
     void start();                                                       // IDLE     -> RAMP
     void abort();                                                       // AnyState -> IDLE
-    TickResult tick(float angle_raw, float dt);                         // tick update to result
+    TickResult calc(float angle_raw, float dt);                         // tick update to result
     bool is_locked() const;                                                // is_locked
     float zero_offset_elec() const;                                     // get zero_offset
     Fault fault() const;                                                // return fault

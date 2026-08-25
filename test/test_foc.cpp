@@ -1,0 +1,209 @@
+// test_foc — foc 库锚点测试（D8 锚点 1/6 + Deadzone 工具 + FOC 黑盒集成）
+// 黑盒：只经公开 API（FOC / Deadzone / transforms），不碰实现细节
+// fake_motor：独立电机模拟器（静止 / 正弦抖动），经 hal 回调接入 FOC
+// 工程约束：-Wall -Wextra -Werror + ASan/UBSan；退出码 = 失败数
+
+#include "foc.hpp"
+#include "transforms.hpp"
+
+#include <cmath>
+#include <cstdio>
+
+namespace {
+
+int g_fails = 0;
+
+void check(const char* name, float got, float want, float tol = 1e-3f) {
+    if (std::fabs(got - want) > tol) {
+        std::printf("FAIL %s: got %.6f want %.6f\n", name, got, want);
+        ++g_fails;
+    }
+}
+
+void check_int(const char* name, int got, int want) {
+    if (got != want) {
+        std::printf("FAIL %s: got %d want %d\n", name, got, want);
+        ++g_fails;
+    }
+}
+
+// ──────────────────────────────────────────────
+// fake_motor：假电机 + 假 HAL（静止 / 正弦抖动两种模式）
+// ──────────────────────────────────────────────
+struct FakeMotor {
+    float angle = 1.2f;      // 传感器角 [0,2π)
+    float wobble = 0.0f;     // 抖动幅度（0 = 静止）
+    int   tick_n = 0;
+    int   pwm_calls = 0;
+    float pwm[3] = {0, 0, 0};
+    bool  enabled = false;
+};
+
+FakeMotor g_motor;
+
+float fake_get_angle(void*) {
+    // 正弦抖动：速度 = wobble·0.1·cos(0.1·t)/dt → 恒超 settle_max_speed
+    return g_motor.angle + g_motor.wobble * std::sin(0.1f * g_motor.tick_n);
+}
+float fake_get_current(void*, float*, float*) { return 0.0f; }
+void fake_set_pwm(void*, float u, float v, float w) {
+    g_motor.pwm_calls++;
+    g_motor.pwm[0] = u; g_motor.pwm[1] = v; g_motor.pwm[2] = w;
+}
+void fake_enable(void*, bool on) { g_motor.enabled = on; }
+
+foc::hal::Hardware make_hw() { return {nullptr, fake_get_angle, fake_get_current, fake_set_pwm, fake_enable}; }
+
+// ──────────────────────────────────────────────
+// make_cfg：可调对齐参数的 FOC 配置工厂
+// ──────────────────────────────────────────────
+foc::Config make_cfg(float ramp_time = 0.01f, float max_speed = 0.5f,
+                     int samples = 5, float timeout = 0.2f) {
+    return foc::Config{
+        12.0f, 3.0f, 7, 1,                  // supply, limit, pp, dir
+        0.0f,                               // vel_lpf_tf
+        1.0f, ramp_time, max_speed, samples, timeout,   // align
+        2.0f, 0.05f,                        // traj vmax, tf
+        {0.5f, 0, 0, 3.0f, 0, 0, 0, 0},     // angle pid
+        {0.1f, 0, 0, 3.0f, 0, 0, 0, 0},     // vel pid
+        {0.0f, true},                       // deadzone {range, soft}
+        foc::CtrlMode::VOLTAGE
+    };
+}
+
+void reset_motor() { g_motor = FakeMotor{}; }
+
+// ──────────────────────────────────────────────
+// A. transforms 锚点（D8-1）：uvw → clarke → park → inv_park → inv_clarke 往返
+// ──────────────────────────────────────────────
+void test_transforms_roundtrip() {
+    const float uvw[][3] = {{1.0f, 0.0f, -1.0f}, {0.3f, -0.7f, 0.4f}, {-0.5f, 0.2f, 0.3f}};
+    const float angles[] = {0.0f, 0.3f, 1.5f, 3.0f};
+    char name[64];
+    for (auto& abc : uvw) {
+        for (float th : angles) {
+            auto ab = foc::transforms::clarke(abc[0], abc[1]);
+            auto dq = foc::transforms::park(ab, th);
+            auto ab2 = foc::transforms::inv_park(dq, th);
+            auto uvw2 = foc::transforms::inv_clarke(ab2);
+            std::snprintf(name, sizeof name, "roundtrip u=%.1f th=%.1f", abc[0], th);
+            check(name, uvw2.u_, abc[0], 1e-4f);
+            check(name, uvw2.v_, abc[1], 1e-4f);
+            check(name, uvw2.w_, abc[2], 1e-4f);
+        }
+    }
+}
+
+// ──────────────────────────────────────────────
+// B. Deadzone 工具锚点（无状态纯算法；range=0 直通）
+// ──────────────────────────────────────────────
+void test_deadzone() {
+    foc::algo::Deadzone soft(0.1f, true), hard(0.1f, false), off(0.0f, true), def;
+    check("dz off 直通", off.calc(0.3f), 0.3f);
+    check("dz soft 死区外直通", soft.calc(0.15f), 0.15f);
+    check("dz soft 死区内缩放", soft.calc(0.05f), 0.025f);
+    check("dz soft 负误差对称", soft.calc(-0.05f), -0.025f);
+    check("dz soft 边界直通", soft.calc(0.1f), 0.1f);
+    check("dz hard 死区内归零", hard.calc(0.05f), 0.0f);
+    check("dz hard 死区外直通", hard.calc(0.15f), 0.15f);
+    check("dz 默认构造直通", def.calc(0.2f), 0.2f);
+}
+
+// ──────────────────────────────────────────────
+// C. FOC 黑盒集成（假 HAL）
+// ──────────────────────────────────────────────
+
+// C1+C2：静止电机 → 对齐成功 → 零位同步 → 闭环稳态有界
+void test_align_and_closed_loop() {
+    reset_motor();
+    foc::FOC foc(make_hw(), make_cfg());
+    float target = 0.0f;
+    foc.align_and_sync(&target);
+
+    int guard = 0;
+    do { foc.tick(target, 0.001f); } while (!foc.is_aligned() && ++guard < 200);
+
+    check_int("align 成功", foc.is_aligned(), 1);
+    check_int("align 无 fault", foc.fault(), 0);
+    check("align 发波", g_motor.pwm_calls > 0 ? 1.0f : 0.0f, 1.0f);
+    check("零位同步 angle≈0", foc.angle(), 0.0f, 1e-4f);
+
+    int pwm_after_align = g_motor.pwm_calls;
+    for (int i = 0; i < 100; i++) foc.tick(target, 0.001f);
+    float dev = std::fmax(std::fabs(g_motor.pwm[0] - 6.0f),
+                std::fmax(std::fabs(g_motor.pwm[1] - 6.0f), std::fabs(g_motor.pwm[2] - 6.0f)));
+    check("闭环稳态输出有界", dev, 0.0f, 3.0f + 1e-3f);
+    check_int("闭环每拍发波", g_motor.pwm_calls, pwm_after_align + 100);
+}
+
+// C3：锚点 6 级联回归——阶跃目标，级联输出全程有界（clamp 生效）
+void test_step_cascade_bounded() {
+    reset_motor();
+    foc::FOC foc(make_hw(), make_cfg());
+    float target = 1.0f;                 // 阶跃 1 rad（电机不动 → 误差持续 → uq 饱和路径）
+    foc.align_and_sync(&target);
+    int guard = 0;
+    do { foc.tick(target, 0.001f); } while (!foc.is_aligned() && ++guard < 200);
+
+    float max_dev = 0.0f;
+    for (int i = 0; i < 200; i++) {
+        foc.tick(target, 0.001f);
+        for (int c = 0; c < 3; c++)
+            max_dev = std::fmax(max_dev, std::fabs(g_motor.pwm[c] - 6.0f));
+    }
+    check("阶跃级联输出有界", max_dev, 0.0f, 3.0f + 1e-3f);
+}
+
+// C4：dt<=0 防御——整拍跳过，PWM 不更新
+void test_dt_guard() {
+    reset_motor();
+    foc::FOC foc(make_hw(), make_cfg());
+    foc.tick(0.0f, 0.0f);                 // 非法 dt：第一行 return，不读传感器不发波
+    check_int("dt=0 不更新 pwm", g_motor.pwm_calls, 0);
+}
+
+// C5：对齐失败透传——抖动电机恒不稳 → 超时 FAULT → is_aligned=false + fault()==SETTLE_TIMEOUT
+void test_align_fault_passthrough() {
+    reset_motor();
+    g_motor.wobble = 0.1f;                // 正弦抖动：速度恒超 settle_max_speed
+    foc::FOC foc(make_hw(), make_cfg(0.01f, 0.5f, 5, 0.05f));
+    float target = 0.0f;
+    foc.align_and_sync(&target);
+
+    int guard = 0;
+    do { foc.tick(target, 0.001f); g_motor.tick_n++; } while (!foc.is_aligned() && ++guard < 200);
+
+    check_int("抖动对齐失败", foc.is_aligned(), 0);
+    check_int("fault 透传 SETTLE_TIMEOUT",
+              foc.fault(), static_cast<int>(foc::alignment::Fault::SETTLE_TIMEOUT));
+}
+
+// C6：enable 透传 + tick_velocity 开环（不依赖传感器，angle 不受影响）
+void test_open_loop_and_enable() {
+    reset_motor();
+    foc::FOC foc(make_hw(), make_cfg());
+    foc.enable(true);
+    check_int("enable(true) 透传", g_motor.enabled, 1);
+    foc.enable(false);
+    check_int("enable(false) 透传", g_motor.enabled, 0);
+
+    foc.tick_velocity(2.0f, 1.0f, 0.001f);
+    foc.tick_velocity(2.0f, 1.0f, 0.001f);
+    check_int("开环发波", g_motor.pwm_calls, 2);
+    check("开环不碰角度", foc.angle(), 0.0f, 1e-4f);
+}
+
+}  // namespace
+
+int main() {
+    test_transforms_roundtrip();
+    test_deadzone();
+    test_align_and_closed_loop();
+    test_step_cascade_bounded();
+    test_dt_guard();
+    test_align_fault_passthrough();
+    test_open_loop_and_enable();
+
+    std::printf("=== %s (test_foc, %d fails) ===\n", g_fails ? "FAILED" : "ALL PASS", g_fails);
+    return g_fails;
+}

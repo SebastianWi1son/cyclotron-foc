@@ -50,7 +50,7 @@ foc::alignment::Config make_cfg(float ramp_time = 0.01f, float max_speed = 2.0f,
 // 不数精确 tick（浮点边缘），20 tick（0.020s）必已跨过 RAMP→SETTLE 转移
 foc::alignment::TickResult feed_still(foc::alignment::Aligner& a, float raw, int n = 20) {
     foc::alignment::TickResult r{};
-    for (int i = 0; i < n; ++i) r = a.tick(raw, kDT);
+    for (int i = 0; i < n; ++i) r = a.calc(raw, kDT);
     return r;
 }
 
@@ -58,7 +58,7 @@ foc::alignment::TickResult feed_still(foc::alignment::Aligner& a, float raw, int
 void test_initial_state() {
     auto cfg = make_cfg();
     foc::alignment::Aligner a(cfg, 7, 1);
-    auto r = a.tick(1.0f, kDT);
+    auto r = a.calc(1.0f, kDT);
     check_state("init state", r.state_, foc::alignment::State::IDLE);
     check("init zero wave u", r.u_, 0.0f);
     check("init zero wave v", r.v_, 0.0f);
@@ -74,12 +74,12 @@ void test_ramp_waveform_and_transition() {
     auto cfg = make_cfg(ramp_time);
     foc::alignment::Aligner a(cfg, 1, 1);
     a.start();
-    check_state("ramp entry", a.tick(0.0f, kDT).state_, foc::alignment::State::RAMP);
+    check_state("ramp entry", a.calc(0.0f, kDT).state_, foc::alignment::State::RAMP);
 
     int n = 1;
     foc::alignment::TickResult r{};
     for (; n < 200; ++n) {
-        r = a.tick(0.0f, kDT);
+        r = a.calc(0.0f, kDT);
         if (r.state_ != foc::alignment::State::RAMP) break;
         // 注意：转移 tick 返回 RAMP 快照（do_ramp 构造 r 时 state_ 尚未改），break 发生在 SETTLE 首拍
         float k = (n + 1) * kDT / ramp_time;       // 第 n 次循环 = 总第 (n+1) 次 tick（ramp entry 已 tick 一次）
@@ -138,9 +138,9 @@ void test_settle_requires_consecutive() {
         // 推进到 SETTLE：转移 tick 返回 RAMP 快照，break 在 SETTLE 首拍（首拍 d=0 已稳 1 次）
         foc::alignment::TickResult r{};
         int guard = 0;
-        do { r = a.tick(1.0f, kDT); } while (r.state_ == foc::alignment::State::RAMP && ++guard < 200);
+        do { r = a.calc(1.0f, kDT); } while (r.state_ == foc::alignment::State::RAMP && ++guard < 200);
         check_state("settle entered", r.state_, foc::alignment::State::SETTLE);
-        r = a.tick(1.0f, kDT);                     // 稳第 2 次 → count=2 → LOCKED（转移在 tick 内，断言用实时 getter）
+        r = a.calc(1.0f, kDT);                     // 稳第 2 次 → count=2 → LOCKED（转移在 tick 内，断言用实时 getter）
         check_true("locked after 2", a.is_locked());
     }
     // B：跳变清零（关键区分断言：跳变后只稳 1 次必须不 LOCKED）
@@ -149,12 +149,12 @@ void test_settle_requires_consecutive() {
         a.start();
         foc::alignment::TickResult r{};
         int guard = 0;
-        do { r = a.tick(1.0f, kDT); } while (r.state_ == foc::alignment::State::RAMP && ++guard < 200);
-        r = a.tick(1.5f, kDT);                     // 跳变 +0.5 rad > 2.0·0.001 → 清零
+        do { r = a.calc(1.0f, kDT); } while (r.state_ == foc::alignment::State::RAMP && ++guard < 200);
+        r = a.calc(1.5f, kDT);                     // 跳变 +0.5 rad > 2.0·0.001 → 清零
         check_state("jump stays settle", r.state_, foc::alignment::State::SETTLE);
-        r = a.tick(1.5f, kDT);                     // 稳 1 次（count=1）→ 未达 samples → 仍 SETTLE
+        r = a.calc(1.5f, kDT);                     // 稳 1 次（count=1）→ 未达 samples → 仍 SETTLE
         check_state("jump+1 settle", r.state_, foc::alignment::State::SETTLE);
-        r = a.tick(1.5f, kDT);                     // 稳 2 次 → LOCKED（转移拍：断言实时 getter）
+        r = a.calc(1.5f, kDT);                     // 稳 2 次 → LOCKED（转移拍：断言实时 getter）
         check_true("jump+2 locked", a.is_locked());
         check("jump+2 offset", a.zero_offset_elec(), 1.5f);
     }
@@ -168,12 +168,12 @@ void test_settle_timeout_fault() {
     // 推进到 SETTLE（转移 tick 返回 RAMP 快照；break 在 SETTLE 首拍，d=0 稳 1 次但不达标）
     foc::alignment::TickResult r{};
     int guard = 0;
-    do { r = a.tick(0.0f, kDT); } while (r.state_ == foc::alignment::State::RAMP && ++guard < 200);
+    do { r = a.calc(0.0f, kDT); } while (r.state_ == foc::alignment::State::RAMP && ++guard < 200);
     // 之后每 tick +0.5 rad（持续不稳）跑 60ms > 50ms 超时
-    for (int i = 0; i < 60; ++i) r = a.tick(0.5f * (i + 1), kDT);
+    for (int i = 0; i < 60; ++i) r = a.calc(0.5f * (i + 1), kDT);
     check_fault("timeout code", a.fault(), foc::alignment::Fault::SETTLE_TIMEOUT);
     check_true("timeout not locked", !a.is_locked());
-    r = a.tick(0.5f * 61, kDT);                    // 下一拍 state 已是 FAULT
+    r = a.calc(0.5f * 61, kDT);                    // 下一拍 state 已是 FAULT
     check_state("timeout fault", r.state_, foc::alignment::State::FAULT);
     check("fault zero wave u", r.u_, 0.0f);
 }
@@ -199,7 +199,7 @@ void test_abort() {
     a.start();
     feed_still(a, 0.0f, 3);
     a.abort();
-    auto r = a.tick(0.0f, kDT);
+    auto r = a.calc(0.0f, kDT);
     check_state("abort idle", r.state_, foc::alignment::State::IDLE);
     check("abort zero u", r.u_, 0.0f);
     check_fault("abort fault none", a.fault(), foc::alignment::Fault::NONE);
@@ -212,12 +212,12 @@ void test_restart_from_fault() {
     a.start();
     foc::alignment::TickResult r{};
     int guard = 0;
-    do { r = a.tick(0.0f, kDT); } while (r.state_ == foc::alignment::State::RAMP && ++guard < 200);
-    for (int i = 0; i < 60; ++i) a.tick(0.5f * (i + 1), kDT);
+    do { r = a.calc(0.0f, kDT); } while (r.state_ == foc::alignment::State::RAMP && ++guard < 200);
+    for (int i = 0; i < 60; ++i) a.calc(0.5f * (i + 1), kDT);
     check_fault("pre restart fault", a.fault(), foc::alignment::Fault::SETTLE_TIMEOUT);
 
     a.start();                               // 故障后重新对齐
-    check_state("restart ramp", a.tick(0.0f, kDT).state_, foc::alignment::State::RAMP);
+    check_state("restart ramp", a.calc(0.0f, kDT).state_, foc::alignment::State::RAMP);
     feed_still(a, 2.0f);                     // RAMP 结束（基准 2.0）
     feed_still(a, 2.0f, 2);                  // 稳 2 次 → LOCKED
     check_true("restart locked", a.is_locked());
@@ -231,7 +231,7 @@ void test_samples_one() {
     foc::alignment::Aligner a(cfg, 1, 1);
     a.start();
     feed_still(a, 1.0f);
-    auto r = a.tick(1.0f, kDT);              // SETTLE 首拍即 LOCKED（转移拍：断言实时 getter）
+    auto r = a.calc(1.0f, kDT);              // SETTLE 首拍即 LOCKED（转移拍：断言实时 getter）
     check_true("samples1 locked", a.is_locked());
     check("samples1 offset", a.zero_offset_elec(), 1.0f);
     (void)r;

@@ -35,7 +35,7 @@ void Aligner::abort() {
 //           超时 → FAULT(SETTLE_TIMEOUT)；角度发散(Δ>2π·0.8?) → FAULT(UNSTABLE)
 //   LOCKED: 计算 zero_offset_elec = raw·pole_pairs·direction，输出 0（撤电压由 foc_core 统一出口）
 //   FAULT:  原因码可查，输出 0（断电由调用方决定）
-TickResult Aligner::tick(float angle_raw, float dt) {
+TickResult Aligner::calc(float angle_raw, float dt) {
     TickResult r{ state_, 0.0f, 0.0f, 0.0f };
     switch (state_) {
         case State::IDLE  : { break; }

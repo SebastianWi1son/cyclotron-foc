@@ -16,9 +16,11 @@ add_library(foc STATIC
     src/algo/ramp.cpp
     src/algo/pid.cpp
     src/algo/smooth_planner.cpp
+    src/algo/deadzone.cpp
+
+    src/foc.cpp
     src/angle_tracking.cpp
     src/alignment.cpp
-    src/foc_core.cpp
     src/svpwm.cpp
 )
 
