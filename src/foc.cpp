@@ -15,7 +15,9 @@ FOC::FOC(hal::Hardware hw, const Config &cfg)
           cfg.pole_pairs_, cfg.direction_),
       vel_pid_(cfg.vel_pid_), pos_pid_(cfg.angle_pid_),
       planner_(cfg.traj_vmax_, cfg.traj_tf_),
-      planned_prev_(0.0f), angle_elec_(0.0f), zero_offset_(0.0f), synced_(false) {}
+      current_loop_(cfg.iq_pid_, cfg.id_pid_),
+      planned_prev_(0.0f), angle_elec_(0.0f), zero_offset_(0.0f), synced_(false),
+      uq_ref_(0.0f), iq_ref_(0.0f), align_uvw_{0.0f, 0.0f, 0.0f} {}
 
 void FOC::enable(bool on) {
     hw_.enable_(hw_.ctx_, on);
@@ -28,7 +30,7 @@ void FOC::align_and_sync(float* cmd_out) {         // ?
     *cmd_out = 0.0f;
 }
 
-void FOC::tick(float angle_cmd, float dt) {
+void FOC::pos_tick(float angle_cmd, float dt) {
 
     if (dt <= 0.0f) return;
     // --- one sample for whole tick ---
@@ -37,7 +39,7 @@ void FOC::tick(float angle_cmd, float dt) {
     // ----- non-block alignment -----
     if (!aligner_.is_locked()) {                               // no locked no closed loop entrance
         auto ar = aligner_.calc(raw, dt);
-        hw_.set_pwm_(hw_.ctx_, ar.u_, ar.v_, ar.w_);  // power up to align
+        align_uvw_ = {ar.u_, ar.v_, ar.w_};  // power up to align
         return;
     }
     // ----- sync once -----
@@ -64,11 +66,36 @@ void FOC::tick(float angle_cmd, float dt) {
 
     // --- cascaded pid ---
     // pos_loop -> vel_loop
-    float angle_elec = tracker_.angle_abs() * config_.pole_pairs_ * config_.direction_ - zero_offset_;
-    auto r = svpwm::calc({config_.voltage_limit_, config_.voltage_supply_},
-                                     {0.0f, uq}, angle_elec );
-    hw_.set_pwm_(hw_.ctx_, r.u_, r.v_, r.w_);
+    angle_elec_ = tracker_.angle_abs() * config_.pole_pairs_ * config_.direction_ - zero_offset_;
+    if (config_.ctrl_mode_ == foc::CtrlMode::CURRENT) {
+        iq_ref_ = (config_.iq_limit_ > 0.0f) ? std::clamp(uq, -config_.iq_limit_, config_.iq_limit_) : uq;
+    }
+    else { uq_ref_ = uq; }
+
 }
+
+// ----- modulation tick with current closed loop ------
+void FOC::modulation_tick(float dt) {
+    if (dt <= 0.0f) return;
+    
+    if (!aligner_.is_locked()) {
+        hw_.set_pwm_(hw_.ctx_, align_uvw_.u_, align_uvw_.v_, align_uvw_.w_);
+        return;
+    }
+    if (config_.ctrl_mode_ == CtrlMode::CURRENT) {
+        float iu = 0.0f, iv = 0.0f;
+        hw_.get_current_(hw_.ctx_, &iu, &iv);
+        auto udq = current_loop_.update(iu, iv, angle_elec_, iq_ref_, dt);
+        auto r = svpwm::calc({config_.voltage_limit_, config_.voltage_supply_}, udq, angle_elec_ );
+        hw_.set_pwm_(hw_.ctx_, r.u_, r.v_, r.w_);
+    }
+    else {
+        auto r = svpwm::calc({config_.voltage_limit_, config_.voltage_supply_},
+                                         {0.0f, uq_ref_}, angle_elec_);
+        hw_.set_pwm_(hw_.ctx_, r.u_, r.v_, r.w_);
+    }
+}
+
 
 // ----- open loop -----
 void FOC::tick_velocity(float vel_cmd, float limit_voltage, float dt) {

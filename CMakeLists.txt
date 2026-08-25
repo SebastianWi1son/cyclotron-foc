@@ -22,6 +22,7 @@ add_library(foc STATIC
     src/angle_tracking.cpp
     src/alignment.cpp
     src/svpwm.cpp
+    src/current_loop.cpp
 )
 
 target_include_directories(foc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inc)
@@ -34,6 +35,13 @@ target_link_libraries(test_foc PRIVATE foc)
 target_compile_options(test_foc PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined)
 target_link_options(test_foc PRIVATE -fsanitize=address,undefined)
 add_test(NAME test_foc COMMAND test_foc)
+
+# ── current_loop 组件测试（v2 CURRENT；D-A1 独立组件独立验证）──
+add_executable(test_current_loop test/test_current_loop.cpp)
+target_link_libraries(test_current_loop PRIVATE foc)
+target_compile_options(test_current_loop PRIVATE -Wall -Wextra -Werror -fsanitize=address,undefined)
+target_link_options(test_current_loop PRIVATE -fsanitize=address,undefined)
+add_test(NAME test_current_loop COMMAND test_current_loop)
 
 # ── svpwm 语义测试（锚点 2，含 SVPWM 目标语义）──
 add_executable(test_svpwm test/test_svpwm.cpp)
