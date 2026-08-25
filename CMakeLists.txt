@@ -12,20 +12,20 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 add_library(foc STATIC
-    src/algo/lpf.cpp
-    src/algo/ramp.cpp
-    src/algo/pid.cpp
-    src/algo/smooth_planner.cpp
-    src/algo/deadzone.cpp
+    src/foc/algo/lpf.cpp
+    src/foc/algo/ramp.cpp
+    src/foc/algo/pid.cpp
+    src/foc/algo/smooth_planner.cpp
+    src/foc/algo/deadzone.cpp
 
-    src/foc.cpp
-    src/angle_tracking.cpp
-    src/alignment.cpp
-    src/svpwm.cpp
-    src/current_loop.cpp
+    src/foc/foc.cpp
+    src/foc/angle_tracking.cpp
+    src/foc/alignment.cpp
+    src/foc/svpwm.cpp
+    src/foc/current_loop.cpp
 )
 
-target_include_directories(foc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inc)
+target_include_directories(foc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inc/foc)
 target_compile_options(foc PRIVATE -Wall -Wextra -Werror)
 
 # ── 锚点测试（D8 六项，ASan/UBSan 加持）──
