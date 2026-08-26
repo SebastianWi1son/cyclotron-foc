@@ -24,7 +24,7 @@ void FOC::enable(bool on) {
     if (!on) { aligner_.abort(); synced_ = false; }
 }
 
-void FOC::align_and_sync(float* cmd_out) {         // ?
+void FOC::align_and_sync(float* cmd_out) {
     aligner_.start();
     synced_ = false;
     *cmd_out = 0.0f;

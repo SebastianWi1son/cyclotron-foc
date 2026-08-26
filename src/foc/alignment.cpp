@@ -32,7 +32,8 @@ void Aligner::abort() {
 //   RAMP: 电角度固定 1.5π；v = align_voltage·(t/ramp_time) 每 tick 递增（svpwm::write 计算 uvw）
 //         到 t≥ramp_time → SETTLE（t 由 dt 累积）
 //   SETTLE: 采样 raw_angle，连续 settle_samples 次 |Δ|<settle_threshold → LOCKED；
-//           超时 → FAULT(SETTLE_TIMEOUT)；角度发散(Δ>2π·0.8?) → FAULT(UNSTABLE)
+//           超时 → FAULT(SETTLE_TIMEOUT)
+//           注：UNSTABLE 发散检测未实现（ROADMAP A6），枚举仅保留已实现码
 //   LOCKED: 计算 zero_offset_elec = raw·pole_pairs·direction，输出 0（撤电压由 foc_core 统一出口）
 //   FAULT:  原因码可查，输出 0（断电由调用方决定）
 TickResult Aligner::calc(float angle_raw, float dt) {

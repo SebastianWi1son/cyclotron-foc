@@ -15,7 +15,7 @@ struct Config {
 };
 
 enum class State : uint8_t { IDLE, RAMP, SETTLE, LOCKED, FAULT };
-enum class Fault : uint8_t { NONE, NO_SENSOR, RAMP_TIMEOUT, UNSTABLE, SETTLE_TIMEOUT };
+enum class Fault : uint8_t { NONE, SETTLE_TIMEOUT };
 struct TickResult { State state_; float u_, v_, w_; };
 
 class Aligner {
