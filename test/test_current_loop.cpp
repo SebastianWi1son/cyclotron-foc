@@ -20,7 +20,7 @@ void check(const char* name, float got, float want, float tol = 1e-3f) {
 }
 
 foc::algo::PIDConfig make_pid(float kp = 1.0f, float ki = 50.0f) {
-    return {kp, ki, 0.0f, 3.0f, 3.0f, 0.0f, 0.0f, 0.0f};
+    return foc::algo::PIDConfig{}.kp(kp).ki(ki).limit_out(3.0f).limit_i(3.0f);
 }
 
 // ──────────────────────────────────────────────

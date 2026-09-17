@@ -1,6 +1,6 @@
-#include "algo/ramp.hpp"
+#include "ctl/ramp.hpp"
 
-namespace foc::algo {
+namespace ctl {
 
 Ramp::Ramp(float max_rate): max_rate_(max_rate), prev_(0.0f) {}
 
@@ -17,4 +17,4 @@ void Ramp::reset() { prev_ = 0.0f; }
 
 void Ramp::set_state(float x) { prev_ = x; }
 
-}  // namespace foc::algo
+}  // namespace ctl

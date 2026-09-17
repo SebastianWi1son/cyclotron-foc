@@ -92,10 +92,10 @@ foc::Config make_cfg(float ramp_time = 0.01f, float max_speed = 0.5f,
         0.0f,                                           // vel_lpf_tf
         1.0f, ramp_time, max_speed, samples, timeout,   // align
         2.0f, 0.05f,                                    // traj vmax, tf
-        {0.5f, 0, 0, 3.0f, 0, 0, 0, 0},                 // angle pid
-        {0.1f, 0, 0, 3.0f, 0, 0, 0, 0},                 // vel pid
-        {2.0f, 50.0f, 0, 3.0f, 3.0f, 0, 0, 0},          // iq pid (v2)
-        {2.0f, 50.0f, 0, 3.0f, 3.0f, 0, 0, 0},          // id pid (v2)
+        foc::algo::PIDConfig{}.kp(0.5f).limit_out(3.0f),                 // angle pid
+        foc::algo::PIDConfig{}.kp(0.1f).limit_out(3.0f),                 // vel pid
+        foc::algo::PIDConfig{}.kp(2.0f).ki(50.0f).limit_out(3.0f).limit_i(3.0f),          // iq pid (v2)
+        foc::algo::PIDConfig{}.kp(2.0f).ki(50.0f).limit_out(3.0f).limit_i(3.0f),          // id pid (v2)
         0.0f,                                           // iq_limit（0 = 不限制）
         {0.0f, true},                                   // deadzone {range, soft}
         foc::CtrlMode::VOLTAGE

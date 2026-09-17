@@ -1,7 +1,6 @@
-#include "algo/deadzone.hpp"
+#include "ctl/deadzone.hpp"
 
-namespace foc::algo {
-
+namespace ctl {
 
 Deadzone::Deadzone(float range, bool soft) : range_(range), soft_(soft) {}
 
@@ -11,7 +10,4 @@ float Deadzone::calc(float error) const {
     return error;
 }
 
-
-
-
-}
+}  // namespace ctl

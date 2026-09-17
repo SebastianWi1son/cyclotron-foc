@@ -80,10 +80,10 @@ foc::Config make_config(foc::CtrlMode mode) {
         0.0f,                               // vel_lpf_tf_      s（0 = 关闭速度 LPF）
         1.0f, 0.02f, 0.5f, 5, 0.2f,         // 对齐：电压/斜坡时间/判稳速度/样本数/超时
         2.0f, 0.05f,                        // traj_vmax_（0=冻结）/ traj_tf_
-        {0.5f, 0, 0, 3.0f, 0, 0, 0, 0},     // angle_pid_（kp ki kd limit_out limit_i ...）
-        {0.1f, 0, 0, 3.0f, 0, 0, 0, 0},     // vel_pid_
-        {2.0f, 50.0f, 0, 3.0f, 3.0f, 0, 0, 0},  // iq_pid_（v2 CURRENT）
-        {2.0f, 50.0f, 0, 3.0f, 3.0f, 0, 0, 0},  // id_pid_（v2 CURRENT）
+        foc::algo::PIDConfig{}.kp(0.5f).limit_out(3.0f),     // angle_pid_（kp ki kd limit_out limit_i ...）
+        foc::algo::PIDConfig{}.kp(0.1f).limit_out(3.0f),     // vel_pid_
+        foc::algo::PIDConfig{}.kp(2.0f).ki(50.0f).limit_out(3.0f).limit_i(3.0f),  // iq_pid_（v2 CURRENT）
+        foc::algo::PIDConfig{}.kp(2.0f).ki(50.0f).limit_out(3.0f).limit_i(3.0f),  // id_pid_（v2 CURRENT）
         0.5f,                               // iq_limit_        A（v2 电流目标限幅）
         {0.0f, true},                       // deadzone_        {range, soft}
         mode                                // ctrl_mode_

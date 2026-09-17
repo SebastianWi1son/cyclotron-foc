@@ -1,21 +1,12 @@
 #pragma once
 
-// 来源：lunokhod control/wheel/inc/ramp.hpp（复用搬运，行为不变）
-// 斜率限制器：每帧 clamp 到 [prev ± max_rate·dt]；max_rate=0 → 冻结输出
-// 规格：FOC_MATH_SPEC.md §3.2
+// ctlkit-forwarder —— 机器可读标记：本文件是转发头，不是上游副本（校验脚本据此跳过逐字比对）
+// 算法原语的上游是 ctlkit —— vendor 在 third_party/ctlkit/（VERSION 记来源 sha）。
+// 保留本路径与 foc::algo 名字，只为不改下游调用点（含应用侧）；Ramp 行为契约见上游 docs/spec/ramp.md（未随 vendor 拷贝）
+// 血缘：lunokhod control/wheel → cyclotron foc::algo → ctlkit ctl
+
+#include "ctl/ramp.hpp"
 
 namespace foc::algo {
-
-class Ramp {
-public:
-    Ramp(float max_rate);
-    float calc(float cmd, float dt);
-    void reset();
-    // 状态注入（bumpless transfer）：prev_ = x，后续 calc 从 x 连续起步
-    void set_state(float x);
-private:
-    float max_rate_;
-    float prev_;
-};
-
+using ctl::Ramp;
 }  // namespace foc::algo

@@ -1,0 +1,13 @@
+#pragma once
+
+// ctlkit 版本 —— 唯一事实源（CMakeLists.txt 从这里解析 project VERSION；发版只改这三行）。
+// 下游拷贝 inc/ + src/ 后可自证版本；兼容政策见 README「兼容政策」。
+
+#define CTL_VERSION_MAJOR 0
+#define CTL_VERSION_MINOR 1
+#define CTL_VERSION_PATCH 0
+
+#define CTL_VERSION_STRINGIZE_(x) #x
+#define CTL_VERSION_STRINGIZE(x) CTL_VERSION_STRINGIZE_(x)
+#define CTL_VERSION_STRING \
+    CTL_VERSION_STRINGIZE(CTL_VERSION_MAJOR) "." CTL_VERSION_STRINGIZE(CTL_VERSION_MINOR) "." CTL_VERSION_STRINGIZE(CTL_VERSION_PATCH)

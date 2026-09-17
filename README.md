@@ -57,6 +57,14 @@ motor.modulation_tick(0.00005f);      // 统一发波；CURRENT 内嵌电流环
 
 完整生命周期演示（对齐 → VOLTAGE 阶跃 → CURRENT 电流闭环 → OPEN_LOOP 开环）见 [`examples/example_foc.cpp`](examples/example_foc.cpp)。
 
+## 算法原语来源
+
+PID / LPF / Ramp / SmoothPlanner / Deadzone 五个算法原语自 v0.1.1 起来自上游库
+[ctlkit](https://github.com/SebastianWi1son/ctlkit)，以 vendor 方式落在 `third_party/ctlkit/`
+（来源 sha 见其 `VERSION`）；`inc/foc/algo/` 保留为**转发头**，因此既有的
+`#include "algo/pid.hpp"` 与 `foc::algo::PID` 等名字**都不变**（应用侧零改动）。
+行为契约以上游库 spec 为准（结论见 [`docs/log/DECISIONS.md`](docs/log/DECISIONS.md) 的 D18~D20）。
+
 ## 文档
 
 | 文档 | 类 | 是什么 |

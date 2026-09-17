@@ -1,0 +1,7 @@
+上游：ctlkit —— 嵌入式实时控制原语库（PID / LPF / Ramp / SmoothPlanner / Deadzone）
+版本：dev/v0.1.1-core（未发布；含 v0.1.0 冻结后的增量：i_frozen_ 分离出口 · PIDConfig 具名链式设置器）
+上游 sha：a1d83c4
+拷贝日期：2026-09-17
+内容：上游 inc/ + src/ 逐字拷贝（不含上游文档与测试）
+规则：本目录只从上游拷，禁止就地修改；下游只允许改调用点
+校验：python3 <上游>/scripts/downstream_diff.py <本仓>

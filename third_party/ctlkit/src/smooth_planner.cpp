@@ -1,6 +1,6 @@
-#include "algo/smooth_planner.hpp"
+#include "ctl/smooth_planner.hpp"
 
-namespace foc::algo {
+namespace ctl {
 
 SmoothPlanner::SmoothPlanner(float max_rate, float Tf): ramp_(max_rate), f1_(Tf), f2_(Tf) {}
 
@@ -13,4 +13,4 @@ void SmoothPlanner::reset() {ramp_.reset(); f1_.reset(); f2_.reset();}
 
 void SmoothPlanner::set_state(float x) { ramp_.set_state(x); f1_.set_state(x); f2_.set_state(x); }
 
-}  // namespace foc::algo
+}  // namespace ctl

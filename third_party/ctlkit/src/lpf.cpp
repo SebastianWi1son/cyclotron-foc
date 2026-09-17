@@ -1,6 +1,6 @@
-#include "algo/lpf.hpp"
+#include "ctl/lpf.hpp"
 
-namespace foc::algo {
+namespace ctl {
 
 LPF::LPF(float Tf): Tf_(Tf), prev_(0.0f) {}
 
@@ -14,4 +14,4 @@ void LPF::reset() { prev_ = 0.0f; }
 
 void LPF::set_state(float x) { prev_ = x; }
 
-}  // namespace foc::algo
+}  // namespace ctl

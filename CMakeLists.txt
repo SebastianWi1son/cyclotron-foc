@@ -11,12 +11,13 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
 
+# 算法原语（pid/lpf/ramp/smooth_planner/deadzone）自 v0.1.1 起来自上游库 ctlkit（vendor，见 third_party/ctlkit/VERSION）
 add_library(foc STATIC
-    src/foc/algo/lpf.cpp
-    src/foc/algo/ramp.cpp
-    src/foc/algo/pid.cpp
-    src/foc/algo/smooth_planner.cpp
-    src/foc/algo/deadzone.cpp
+    third_party/ctlkit/src/lpf.cpp
+    third_party/ctlkit/src/ramp.cpp
+    third_party/ctlkit/src/pid.cpp
+    third_party/ctlkit/src/smooth_planner.cpp
+    third_party/ctlkit/src/deadzone.cpp
 
     src/foc/foc.cpp
     src/foc/angle_tracking.cpp
@@ -25,7 +26,10 @@ add_library(foc STATIC
     src/foc/current_loop.cpp
 )
 
-target_include_directories(foc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/inc/foc)
+target_include_directories(foc PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/inc/foc                  # 本仓头（含 algo/ 转发头）
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ctlkit/inc   # 上游库头（ctl/...）
+)
 target_compile_options(foc PRIVATE -Wall -Wextra -Werror)
 
 # ── 锚点测试（D8 六项，ASan/UBSan 加持）──

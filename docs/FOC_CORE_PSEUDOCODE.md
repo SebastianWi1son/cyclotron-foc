@@ -7,8 +7,9 @@ generated: false
 > 日期：2026-08-23 ｜ 状态：**D1~D10/O1 全部已决（2026-08-23，记录表见 FOC_GUIDE.md）→ 按本文件伪代码开工**
 > 依据：FOC_GUIDE.md（决策机制/组件边界）+ FOC_DESIGN.md（决策清单）+ REFERENCE_REVIEW.md / FOC_CORE_COMPARISON.md（参考库审阅）
 > 数学基线：legacy `lib/foc/`（foc.c / foc.h / foc_transform.h 全文精读，约定照搬）
-> 数学**权威**：本文 §3~§10（每组件含数学规格 + 实现）。原 `FOC_MATH_SPEC.md` 已于 2026-08-23 并入本文，
-> 2026-08-23 退役至 `trash/`（见 `trash/README.md`）。
+> 数学**权威**（v0.1.1 起）：**算法原语（pid / lpf / ramp / smooth_planner / deadzone）以上游库 ctlkit 为唯一来源** ——
+> vendor 在 `third_party/ctlkit/`（来源 sha 见其 `VERSION`），行为契约见上游库 spec（ctlkit 仓的 docs/spec/，未随 vendor 拷贝）。
+> 本文 §3~§10 是本仓视角的规格与实现说明，与上游冲突时**以上游为准**。原 `FOC_MATH_SPEC.md` 已于 2026-08-23 并入本文、退役至 `trash/`。
 
 ---
 
@@ -320,7 +321,8 @@ public:
 ## 7. foc.hpp — 编排（v1 两模式 + v2 电流环双入口，D-A2 方案 b 已拍板）
 
 > 本节按**文件为单位**给出完整代码（`inc/foc.hpp` + `src/foc.cpp` + `inc/current_loop.hpp`），可直接抄。
-> 依赖：`inc/algo/`（lpf/ramp/smooth_planner/pid/deadzone）、`transforms/svpwm/angle_tracking/alignment/hal` 均在本仓库。
+> 依赖：算法原语（lpf/ramp/smooth_planner/pid/deadzone）来自上游库 vendor 目录 `third_party/ctlkit/`；
+> `inc/foc/algo/` 保留为**转发头**（include 写法与 `foc::algo::*` 名字均不变）；`transforms/svpwm/angle_tracking/alignment/hal` 仍在本仓库。
 > **双入口架构（D-A2）**：`tick()` = position loop（低频 1kHz：对齐/同步/位置速度环 → 产出**命令缓冲**）；`current_tick()` = current loop（PWM 频：**统一发波出口**；CURRENT 内嵌电流闭环）。级联命令经成员跨 tick 缓冲（uq_ref_/iq_ref_/align_uvw_）。双速率是各家主流（odrive/simplefoc/qdrive），legacy 1kHz 同频为简化特例；v2 结构不欠债、频率不提前付税（分析见 docs/CURRENT_LOOP.md）。
 
 ```cpp
