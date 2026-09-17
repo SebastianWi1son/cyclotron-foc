@@ -1,3 +1,7 @@
+---
+class: fact
+generated: false
+---
 # foc-core
 
 零依赖 C++17 FOC（磁场定向控制）核心库：坐标变换、SVPWM 调制、多圈角度跟踪、非阻塞对齐状态机、位置/速度/电流级联控制。**PC 可测、纯算法与硬件隔离**，可直接移植到任意 MCU（STM32/G431 等）。
@@ -55,10 +59,23 @@ motor.modulation_tick(0.00005f);      // 统一发波；CURRENT 内嵌电流环
 
 ## 文档
 
-- [`docs/FOC_CORE_PSEUDOCODE.md`](docs/FOC_CORE_PSEUDOCODE.md) — 主设计文档（架构、接口、决策记录 D1~D13 / D-A1~A6）
-- [`docs/ALIGNMENT.md`](docs/ALIGNMENT.md) — 对齐状态机专题
-- [`docs/CURRENT_LOOP.md`](docs/CURRENT_LOOP.md) — 电流环四家调研对比（legacy/odrive/qdrive/simplefoc）
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — v3+ 升级路线（控制增强/架构/平台）
+| 文档 | 类 | 是什么 |
+|---|---|---|
+| [`docs/FOC_CORE_PSEUDOCODE.md`](docs/FOC_CORE_PSEUDOCODE.md) | fact | **主设计文档**：架构 / 接口 / 各组件数学规格 + 实现 |
+| [`docs/log/DECISIONS.md`](docs/log/DECISIONS.md) | log | **决策记录**（D1~D17 / D-A1~A6）—— 结论 + 日期 + 理由的**唯一来源** |
+| [`docs/ALIGNMENT.md`](docs/ALIGNMENT.md) | fact | 对齐状态机专题 |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | status | v3+ 升级路线（控制增强 / 架构 / 平台） |
+| [`docs/log/CURRENT_LOOP.md`](docs/log/CURRENT_LOOP.md) | log | 电流环四家调研对比（一次性，2026-08） |
+| [`docs/log/HANDOFF.md`](docs/log/HANDOFF.md) | log | 2026-08-27 交接快照 |
+| `trash/` | — | 退役文档（`FOC_MATH_SPEC.md` / `FOC_DESIGN.md`），**只停不删**，见 [`trash/README.md`](trash/README.md) |
+
+**文档规矩**（全项目适用）看项目根的 `docs/README.md`。本仓自带文档门禁：
+
+```bash
+python3 scripts/check_docs.py          # 文件头 / 类与位置 / 禁止行号 / 链接与引用存在 / fact 非孤儿
+python3 scripts/check_docs.py --why    # 规则清单与各自依据
+python3 scripts/ci_local.py            # 本地把 CI 整个跑一遍
+```
 
 ## License
 

@@ -1,3 +1,7 @@
+---
+class: log
+generated: false
+---
 # 电流环布置构建对比调研（legacy / odrive / qdrive / simplefoc）
 
 日期：2026-08-23

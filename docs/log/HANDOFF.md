@@ -1,3 +1,7 @@
+---
+class: log
+generated: false
+---
 # CyclotronFOC — Handoff 文档
 
 > 生成日期：2026-08-27 ｜ 用途：交接给新环境/新 agent 接手继续开发
@@ -34,7 +38,8 @@ ctest --test-dir build --output-on-failure   # 5 个测试 target 应全绿
 
 | 文档 | 角色 |
 |---|---|
-| `docs/FOC_CORE_PSEUDOCODE.md` | **主设计文档**：架构/接口/决策记录 D1~D17 + D-A1~A6 |
+| `docs/FOC_CORE_PSEUDOCODE.md` | **主设计文档**：架构 / 接口 / 各组件数学规格 + 实现 |
+| `docs/log/DECISIONS.md` | **决策记录**（D1~D17 / D-A1~A6）—— ⚠️ 2026-09-14 补：交接时决策记录还在 PSEUDOCODE §0/§12，现已抽出独立成文 |
 | `docs/ROADMAP.md` | v3+ 升级路线（含外部评审补项与优先级） |
 | `docs/ALIGNMENT.md` | 对齐状态机专题 |
 | `docs/CURRENT_LOOP.md` | 电流环四家调研对比（legacy/odrive/qdrive/simplefoc） |

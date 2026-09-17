@@ -28,3 +28,15 @@ jobs:
         run: cmake --build build-san -j
       - name: Test
         run: ctest --test-dir build-san --output-on-failure
+
+  # ── 文档门禁 ────────────────────────────────────────────────
+  # 规矩写在项目根 docs/README.md，实现写在 scripts/check_docs.py。
+  # 没有这一步，"文档规矩"就只能靠记性 —— 而它一定会因此腐化。
+  # 对【冻结项目】尤其重要：读者只剩未来的自己，说错了没人当场发现。
+  docs-gate:
+    name: 文档门禁（文件头 / 类与位置 / 禁止行号 / 链接与引用存在 / fact 非孤儿）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查
+        run: python3 scripts/check_docs.py

@@ -1,59 +1,44 @@
+---
+class: fact
+generated: false
+---
 # FOC 核心库 — 开工前置检查 & 指导伪代码
 
 > 日期：2026-08-23 ｜ 状态：**D1~D10/O1 全部已决（2026-08-23，记录表见 FOC_GUIDE.md）→ 按本文件伪代码开工**
 > 依据：FOC_GUIDE.md（决策机制/组件边界）+ FOC_DESIGN.md（决策清单）+ REFERENCE_REVIEW.md / FOC_CORE_COMPARISON.md（参考库审阅）
 > 数学基线：legacy `lib/foc/`（foc.c / foc.h / foc_transform.h 全文精读，约定照搬）
-> 数学精确规格：**FOC_MATH_SPEC.md**（每个组件的具体公式/离散化/边界处理，本文 §3~§10 的细化）
+> 数学**权威**：本文 §3~§10（每组件含数学规格 + 实现）。原 `FOC_MATH_SPEC.md` 已于 2026-08-23 并入本文，
+> 2026-08-23 退役至 `trash/`（见 `trash/README.md`）。
 
 ---
 
-## 0. 决断清单（2026-08-23 全部已决，记录表见 FOC_GUIDE.md）
+## 0. 决断清单
 
-### A. 组件边界决定项（已拍板）
+> ✅ **全部已决。** 结论 + 日期 + 理由的唯一来源：**[`log/DECISIONS.md`](log/DECISIONS.md)**。
+> 本节不再复制结论 —— 复制就是"同一句话说两遍"，迟早打架。
 
-| # | 决策点 | 结论 |
-|---|---|---|
-| **D1** | namespace | `foc::` 子命名空间分层（transforms/svpwm/angle_tracker/alignment/core/hal） |
-| **D2** | v1 范围 | **VOLTAGE + OPEN_LOOP**，CURRENT 留 v2 |
-| **D3** | 对齐方式 | **非阻塞状态机**（IDLE→RAMP→SETTLE→LOCKED→FAULT），无 delay_ms_cb |
-| **D4** | AngleTracker 归属 | **核心内组件**；HAL get_angle 语义 = 物理角 [0,2π) |
-| **D5** | 回调形态 | **函数指针 + ctx 通道**（wheel 同构） |
-
-### B. 默认确认项（已拍板）
-
-| # | 决策点 | 结论 |
-|---|---|---|
-| D7 | 单位 | rad / rad/s / A / V 全 rad 系；命名中性 |
-| D9 | 范围裁剪 | SVPWM 只做线性区（D13 修正后：真 SVPWM = 中心偏置 + 零序注入，上限 Vdc/√3） |
-| D10 | 工程约束 | 零依赖（仅 \<cmath\>）、声明/定义分离、-Wall -Wextra -Werror、三 target |
-| D6 | PID 来源 | **复用 lunokhod wheel 算法**（`control/wheel/` 的 PID/LPF/Ramp/SmoothPlanner 直接引用源码，不复制；lunokhod 非 git 仓库，submodule 待其转 git + 算法库定案后再议） |
-| D8 | 测试锚点 | 六项确认（见 §9） |
-
-### C. 外部依赖状态
-
-- O1 reference 确认 ✅；算法库策略（lunokhod A1~A8）⬜ 待拍板 → 不阻塞（副本过渡已定）
+编号速查：`D1`~`D12` = 开工批 · `D13`~`D17` = 实现期 · `D-A1`~`A6` = v2 电流环 · `O1` = 开放问题。
 
 ---
 
-## 1. 文件布局（FOC_GUIDE §四，D1 推荐版）
+## 1. 文件布局（开工计划 vs 实际落地）
 
-```
-foc/
-├── CMakeLists.txt            # 库 foc + test_foc + example_foc 三 target
-├── inc/foc/                  # 统一头目录（foc 库名）
-│   ├── transforms.hpp        # Clarke/Park/InvPark — 零状态纯函数
-│   ├── svpwm.hpp             # 中心对齐 + 限幅
-│   ├── angle_tracker.hpp     # 多圈展开 + 速度 LPF
-│   ├── alignment.hpp         # 对齐状态机（非阻塞）
-│   ├── foc_core.hpp          # 编排：模式分发 + 级联（依赖 hal.hpp）
-│   ├── hal.hpp               # 回调形态（D5）
-│   └── config.hpp            # FocConfig 聚合（wheel 经验）
-├── src/                      # 声明/定义分离，一组件一 .cpp
-├── test/                     # test_foc.cpp（锚点六项）
-└── examples/                 # example_foc.cpp（PC 电机模型闭环）
-```
+> **左列是 2026-08-23 开工时的计划，右列是实际落地。以右列为准**（也可直接看 `README.md`）。
+> 保留左列是因为它是决策痕迹 —— 但**别拿它找文件**。
 
-依赖方向（单向，零环）：`config → hal → transforms/svpwm/angle_tracker/alignment → foc_core`
+| 计划（2026-08-23，D1 推荐版） | 实际（v1+v2 完工后） |
+|---|---|
+| `inc/foc/` 下平铺头文件 | 同目录，但 `angle_tracker` → `angle_tracking`（命名更准确） |
+| `foc_core` 文件负责编排 | 定名为 `foc`；`FocConfig` 也并入它 |
+| `config` 单独成文件聚合 `FocConfig` | 未单独成文件 |
+| （未列） | 新增 `algo/`：pid / lpf / ramp / smooth_planner / deadzone |
+| （未列） | 新增 `current_loop`（v2 电流环） |
+| `CMakeLists.txt` 三 target（库 / test / example） | ✅ 一致 |
+| `src/` 声明定义分离，一组件一 `.cpp` | ✅ 一致 |
+| `test/` 锚点六项 | ✅ 一致（5 个测试 target） |
+| `examples/` PC 电机模型闭环 | ✅ 一致 |
+
+依赖方向（单向，零环）：`config → hal → transforms / svpwm / angle_tracking / alignment → foc`
 
 ---
 
@@ -592,21 +577,7 @@ example_foc.cpp：
 
 ---
 
-## 12. 拍板记录（2026-08-23 全部通过，开工口令已生效）
+## 12. 拍板记录
 
-- [x] D1 namespace：`foc::` 分层 ✅
-- [x] D2 v1 范围：VOLTAGE + OPEN_LOOP ✅
-- [x] D3 对齐：非阻塞状态机 ✅
-- [x] D4 AngleTracker：核心内 ✅
-- [x] D5 回调：函数指针 + ctx ✅
-- [x] D6 PID：**复用 lunokhod wheel 算法**（不复制）✅
-- [x] D7/D9/D10：按推荐默认通过 ✅
-- [x] D8：六项锚点确认 ✅
-- [x] D13：SVPWM 语义修正——modulate 加零序注入 v0=-(max+min)/2（carrier-based SVPWM，与经典 7 段式等价）✅ 动机：legacy 与 v1 初版均为 SPWM（无注入，线电压上限 0.866·Vdc），语义偏离修复；代价：锚点 2 不变式改为线电压 ≤ 2·limit（和=3·center 失效）
-- [x] D-A1 电流环组件化：`current_loop::CurrentLoop` 独立组件（odrive/simplefoc/qdrive 三家先例；纯算法无 IO）✅
-- [x] D-A2 电流环频率：**方案 b 双入口**——`tick()` position loop（1kHz）+ `current_tick()` current loop（PWM 频统一发波）✅ 双速率是各家主流；legacy 1kHz 同频为简化特例
-- [x] D-A3 电流目标限幅：`iq_limit_`（simplefoc current_limit 经验；0 = 不限制）✅
-- [x] D-A4 传感器失败回退：v2 不做（HAL 电流必提供；降级阶梯留 v3）✅
-- [x] D-A5 模式切换：构造期固定（Config ctrl_mode_）✅
-- [x] D-A6 Id 目标 = 0（照 legacy）；Config 字段 `iq_pid_/id_pid_` ✅
-- [x] 2026-08-23 电流环设计拍板（四家调研结论见 docs/CURRENT_LOOP.md）✅
+> ✅ **全部已决（2026-08-23 ~ 08-26）。** 完整记录见 **[`log/DECISIONS.md`](log/DECISIONS.md)**。
+> 本节原是一份"逐条打勾"的清单，现已被那份记录取代（同一事实只留一处）。

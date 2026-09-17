@@ -1,3 +1,7 @@
+---
+class: status
+generated: false
+---
 # foc 库升级路线（v3+ 候选清单）
 
 日期：2026-08-26（当前节点视角：v1 双模式 + v2 CURRENT 已完成，5 测试全绿）

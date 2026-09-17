@@ -1,3 +1,7 @@
+---
+class: fact
+generated: false
+---
 # alignment 组件设计专题（2026-08-23）
 
 > 对齐状态机的方法论总结：状态机/API/判稳设计/别家对比/挂起项。

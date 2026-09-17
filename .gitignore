@@ -5,3 +5,7 @@ build/
 # IDE
 .idea/
 *.iml
+
+# Python（scripts/ 下的门禁工具会生成）
+__pycache__/
+*.pyc
